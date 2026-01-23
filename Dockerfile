@@ -6,11 +6,8 @@ RUN npm ci
 COPY . .
 
 # Create .env file with Supabase credentials
-ARG VITE_SUPABASE_URL
-ARG VITE_SUPABASE_ANON_KEY
-RUN echo "VITE_SUPABASE_URL=${VITE_SUPABASE_URL}" > .env && \
-    echo "VITE_SUPABASE_ANON_KEY=${VITE_SUPABASE_ANON_KEY}" >> .env && \
-    cat .env
+RUN echo "VITE_SUPABASE_URL=https://mbyjehhplruoqlgphfvw.supabase.co" > .env && \
+    echo "VITE_SUPABASE_ANON_KEY=sb_publishable_ouDY6PbVEx52C7TcxuQ8Ig_Xq7q6can" >> .env
 
 RUN npm run build
 
