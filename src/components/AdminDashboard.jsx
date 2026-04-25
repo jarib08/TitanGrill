@@ -15,6 +15,10 @@ const AdminDashboard = () => {
     const [recentClients, setRecentClients] = useState([]);
     const [chartData, setChartData] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [searchResults, setSearchResults] = useState([]);
+    const [isSearching, setIsSearching] = useState(false);
+
 
     const fetchDashboardData = async () => {
         try {
@@ -175,6 +179,8 @@ const AdminDashboard = () => {
                 alert("¡Premio canjeado exitosamente! 🏆");
                 // Refresh data
                 fetchDashboardData();
+                // If the client was in search results, refresh that too
+                if (searchQuery) handleSearch(searchQuery);
             } else {
                 alert("Error: " + data.message);
             }
@@ -183,6 +189,31 @@ const AdminDashboard = () => {
             alert("Error al procesar el canje.");
         }
     };
+
+    const handleSearch = async (query) => {
+        setSearchQuery(query);
+        if (query.length < 3) {
+            setSearchResults([]);
+            return;
+        }
+
+        setIsSearching(true);
+        try {
+            const { data, error } = await supabase
+                .from('clientes')
+                .select('*')
+                .ilike('phone', `%${query}%`)
+                .limit(5);
+
+            if (error) throw error;
+            setSearchResults(data || []);
+        } catch (err) {
+            console.error("Search Error:", err);
+        } finally {
+            setIsSearching(false);
+        }
+    };
+
 
     const handleLogout = () => {
         sessionStorage.removeItem('titan_admin');
@@ -289,6 +320,76 @@ const AdminDashboard = () => {
                             </ResponsiveContainer>
                         </div>
                     </div>
+
+                    {/* Search Section */}
+                    <div className="lg:col-span-3 bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden mb-8">
+                        <div className="p-6 border-b border-zinc-800 bg-zinc-950/30">
+                            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                                <h2 className="text-lg font-serif text-white">Buscar Cliente</h2>
+                                <div className="relative max-w-md w-full">
+                                    <input
+                                        type="text"
+                                        placeholder="Buscar por teléfono..."
+                                        className="w-full bg-black border border-zinc-800 rounded-xl px-4 py-2 text-sm text-white focus:border-fire outline-none transition-all pl-10"
+                                        value={searchQuery}
+                                        onChange={(e) => handleSearch(e.target.value)}
+                                    />
+                                    <div className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500">
+                                        <Users size={16} />
+                                    </div>
+                                    {isSearching && (
+                                        <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                                            <div className="w-4 h-4 border-2 border-fire border-t-transparent rounded-full animate-spin"></div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        {searchQuery.length >= 3 && (
+                            <div className="divide-y divide-zinc-800 bg-zinc-900/50">
+                                {searchResults.length > 0 ? (
+                                    searchResults.map((client) => (
+                                        <div key={client.id} className="p-4 flex items-center justify-between hover:bg-zinc-800/50 transition-colors group">
+                                            <div className="flex items-center gap-4">
+                                                <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg ${client.stamps_count >= 10 ? 'bg-gold text-black' : 'bg-zinc-800 text-zinc-400'}`}>
+                                                    {client.nombre ? client.nombre.charAt(0).toUpperCase() : '?'}
+                                                </div>
+                                                <div>
+                                                    <p className="text-white font-medium">{client.nombre || 'Sin Nombre'}</p>
+                                                    <p className="text-zinc-500 text-xs">{client.phone || ''}</p>
+                                                </div>
+                                            </div>
+                                            <div className="flex items-center gap-4">
+                                                {client.stamps_count >= 10 && (
+                                                    <button
+                                                        onClick={() => handleRedeem(client.id, client.stamps_count)}
+                                                        className="flex items-center gap-1 bg-gold text-black px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-yellow-400 transition-colors"
+                                                    >
+                                                        <Award size={14} />
+                                                        Canjear
+                                                    </button>
+                                                )}
+                                                <div className="text-right">
+                                                    <p className={`text-sm font-bold ${client.stamps_count >= 10 ? 'text-gold' : 'text-fire'}`}>
+                                                        {client.stamps_count} <span className="text-xs font-normal text-zinc-500">Sellos</span>
+                                                    </p>
+                                                </div>
+                                                <Link to={`/admin/client/${client.id}`} className="p-2 text-zinc-600 hover:text-white transition-colors">
+                                                    <ArrowRight size={18} />
+                                                </Link>
+                                            </div>
+                                        </div>
+                                    ))
+                                ) : (
+                                    <div className="p-8 text-center text-zinc-500 text-sm">
+                                        No se encontraron clientes con "{searchQuery}"
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+
 
                     {/* Table Section */}
                     <div className="lg:col-span-3 bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden">
