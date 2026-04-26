@@ -4,3 +4,7 @@
   --color-fire: #ff4500;
   --color-gold: #d4af37;
 }
+
+html {
+  scroll-behavior: smooth;
+}

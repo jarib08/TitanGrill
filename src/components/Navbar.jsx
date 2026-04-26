@@ -28,6 +28,7 @@ const Navbar = () => {
                         <div className="ml-10 flex items-center space-x-12">
                             <a href="#menu" className="text-zinc-300 hover:text-fire transition-colors uppercase tracking-widest text-xs font-semibold">Menú</a>
                             <a href="#location" className="text-zinc-300 hover:text-fire transition-colors uppercase tracking-widest text-xs font-semibold">Ubicación</a>
+                            <a href="#join-club" className="bg-fire text-white px-6 py-2 rounded-full hover:bg-orange-600 transition-all uppercase tracking-widest text-[10px] font-bold shadow-[0_5px_15px_rgba(255,69,0,0.3)]">Únete al Club</a>
 
                         </div>
                     </div>
@@ -49,6 +50,7 @@ const Navbar = () => {
                     <div className="px-4 py-8 space-y-6 flex flex-col items-center">
                         <a href="#menu" className="text-xl font-serif text-white hover:text-fire" onClick={() => setIsOpen(false)}>Menú</a>
                         <a href="#location" className="text-xl font-serif text-white hover:text-fire" onClick={() => setIsOpen(false)}>Ubicación</a>
+                        <a href="#join-club" className="text-xl font-serif text-fire font-bold" onClick={() => setIsOpen(false)}>Únete al Club</a>
 
                     </div>
                 </div>

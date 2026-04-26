@@ -9,6 +9,8 @@ import MenuGrid from './components/MenuGrid';
 import { LocationMap } from './components/LocationSection';
 import WhatsAppButton from './components/WhatsAppButton';
 import LeadPopup from './components/LeadPopup';
+import JoinClubSection from './components/JoinClubSection';
+
 
 // Common components
 import ErrorFallback from './components/common/ErrorFallback';
@@ -28,9 +30,11 @@ const LandingPage = () => {
             <Hero />
             <MenuGrid />
             <LocationMap />
+            <JoinClubSection />
             <WhatsAppButton />
             <LeadPopup />
         </Layout>
+
     );
 };
 
