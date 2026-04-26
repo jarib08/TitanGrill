@@ -202,8 +202,9 @@ const AdminDashboard = () => {
             const { data, error } = await supabase
                 .from('clientes')
                 .select('*')
-                .ilike('phone', `%${query}%`)
+                .ilike('celular', `%${query}%`)
                 .limit(5);
+
 
             if (error) throw error;
             setSearchResults(data || []);
@@ -334,6 +335,7 @@ const AdminDashboard = () => {
                                         value={searchQuery}
                                         onChange={(e) => handleSearch(e.target.value)}
                                     />
+
                                     <div className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500">
                                         <Users size={16} />
                                     </div>
@@ -357,8 +359,9 @@ const AdminDashboard = () => {
                                                 </div>
                                                 <div>
                                                     <p className="text-white font-medium">{client.nombre || 'Sin Nombre'}</p>
-                                                    <p className="text-zinc-500 text-xs">{client.phone || ''}</p>
+                                                    <p className="text-zinc-500 text-xs">{client.celular || ''}</p>
                                                 </div>
+
                                             </div>
                                             <div className="flex items-center gap-4">
                                                 {client.stamps_count >= 10 && (
@@ -407,8 +410,9 @@ const AdminDashboard = () => {
                                             </div>
                                             <div>
                                                 <p className="text-white font-medium">{client.nombre || 'Sin Nombre'}</p>
-                                                <p className="text-zinc-500 text-xs">{client.phone || ''}</p>
+                                                <p className="text-zinc-500 text-xs">{client.celular || ''}</p>
                                             </div>
+
                                         </div>
 
                                         <div className="flex items-center gap-4 md:gap-8">
