@@ -92,8 +92,9 @@ const JoinClubSection = () => {
                             </div>
                             
                             <h2 className="text-4xl md:text-5xl font-serif text-white mb-4">
-                                Únete al Club <span className="text-fire">Primo Hermano</span>
+                                Únete al Club <span className="text-fire">Titan Grill</span>
                             </h2>
+
                             <p className="text-zinc-400 max-w-xl mx-auto mb-12 text-lg">
                                 Regístrate hoy y empieza a acumular sellos de fuego por cada visita. ¡Tu lealtad merece ser recompensada!
                             </p>
