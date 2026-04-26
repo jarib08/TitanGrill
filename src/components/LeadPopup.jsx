@@ -270,9 +270,10 @@ const LeadPopup = () => {
                                         <Flame className="text-white fill-white" size={24} aria-hidden="true" />
                                     </div>
                                     <h2 id="registration-title" className="text-xl font-serif text-white mb-1">
-                                        \u00danete al Club Titan
+                                        Únete al Club Titan
                                     </h2>
-                                    <p className="text-zinc-400 text-xs">Reg\u00edstrate para acumular puntos.</p>
+                                    <p className="text-zinc-400 text-xs">Regístrate para acumular puntos.</p>
+
 
                                     {/* Referral Badge */}
                                     {referrerName && (
@@ -309,7 +310,8 @@ const LeadPopup = () => {
                                         <input
                                             id="phone"
                                             type="tel"
-                                            placeholder="Celular (10 d\u00edgitos)"
+                                            placeholder="Celular (10 dígitos)"
+
                                             required
                                             maxLength="10"
                                             autoComplete="tel"
@@ -388,11 +390,12 @@ const LeadPopup = () => {
 
                             <div className="text-center px-6">
                                 <h3 id="card-title" className="text-gold font-serif text-2xl mb-2">
-                                    \u00a1Membres\u00eda Activada!
+                                    ¡Membresía Activada!
                                 </h3>
                                 <p className="text-zinc-400 text-sm mb-4 leading-relaxed">
-                                    Presenta este c\u00f3digo QR a nuestro staff cada vez que nos visites para sumar sellos de fuego.
+                                    Presenta este código QR a nuestro staff cada vez que nos visites para sumar sellos de fuego.
                                 </p>
+
 
                                 <button
                                     onClick={handleCardClose}
