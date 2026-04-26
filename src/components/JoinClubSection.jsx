@@ -91,15 +91,18 @@ const JoinClubSection = () => {
                                 <Flame className="text-fire fill-fire" size={32} />
                             </div>
                             
-                            <h2 className="text-4xl md:text-5xl font-serif text-white mb-4">
+                            <h2 className="text-3xl md:text-5xl font-serif text-white mb-4 px-2">
                                 Únete al Club <span className="text-fire">Titan Grill</span>
                             </h2>
 
-                            <p className="text-zinc-400 max-w-xl mx-auto mb-12 text-lg">
+
+                            <p className="text-zinc-400 max-w-xl mx-auto mb-10 text-base md:text-lg px-4">
                                 Regístrate hoy y empieza a acumular sellos de fuego por cada visita. ¡Tu lealtad merece ser recompensada!
                             </p>
 
-                            <div className="max-w-md mx-auto bg-zinc-900/50 backdrop-blur-md border border-white/5 p-8 rounded-3xl shadow-2xl">
+
+                            <div className="max-w-md mx-auto bg-zinc-900/50 backdrop-blur-md border border-white/5 p-6 md:p-8 rounded-3xl shadow-2xl">
+
                                 <form onSubmit={handleSubmit} className="space-y-4">
                                     <div className="text-left">
                                         <label className="text-zinc-500 text-xs uppercase tracking-widest font-bold ml-1 mb-2 block">Nombre Completo</label>
@@ -139,8 +142,9 @@ const JoinClubSection = () => {
                                     <button
                                         type="submit"
                                         disabled={loading}
-                                        className="w-full bg-fire text-white font-bold py-4 rounded-xl uppercase tracking-[0.2em] text-sm hover:bg-orange-600 transition-all shadow-[0_10px_20px_rgba(255,69,0,0.2)] active:scale-[0.98] disabled:opacity-50"
+                                        className="w-full bg-fire text-white font-bold py-4 rounded-xl uppercase tracking-[0.1em] md:tracking-[0.2em] text-xs md:text-sm hover:bg-orange-600 transition-all shadow-[0_10px_20px_rgba(255,69,0,0.2)] active:scale-[0.98] disabled:opacity-50"
                                     >
+
                                         {loading ? 'Procesando...' : 'Registrarme y Obtener Tarjeta'}
                                     </button>
                                 </form>
