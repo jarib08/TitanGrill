@@ -2,9 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { Navigate, Outlet } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 
-const ProtectedRoute = () => {
+const ProtectedRoute = ({ allowedRoles = ['ADMINISTRADOR'] }) => {
     const [session, setSession] = useState(null);
-    const [isAdmin, setIsAdmin] = useState(false);
+    const [hasAccess, setHasAccess] = useState(false);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
@@ -13,19 +13,21 @@ const ProtectedRoute = () => {
             setSession(session);
 
             if (session?.user) {
-                // Verify admin status from admin_users table
-                const { data: adminData, error } = await supabase
-                    .from('admin_users')
-                    .select('id')
+                // Verify status and role from perfiles_trabajadores table
+                const { data: profile, error } = await supabase
+                    .from('perfiles_trabajadores')
+                    .select('rol, estado')
                     .eq('id', session.user.id)
                     .maybeSingle();
 
-                if (adminData && !error) {
-                    setIsAdmin(true);
+                if (profile && !error && profile.estado === 'ACTIVO' && allowedRoles.includes(profile.rol)) {
+                    setHasAccess(true);
                 } else {
-                    setIsAdmin(false);
-                    // Sign out if not an admin
-                    await supabase.auth.signOut();
+                    setHasAccess(false);
+                    // Only sign out if the user is completely invalid (no profile or inactive)
+                    if (!profile || profile.estado !== 'ACTIVO') {
+                        await supabase.auth.signOut();
+                    }
                 }
             }
 
@@ -38,22 +40,26 @@ const ProtectedRoute = () => {
             setSession(session);
 
             if (session?.user) {
-                const { data: adminData } = await supabase
-                    .from('admin_users')
-                    .select('id')
+                const { data: profile } = await supabase
+                    .from('perfiles_trabajadores')
+                    .select('rol, estado')
                     .eq('id', session.user.id)
                     .maybeSingle();
 
-                setIsAdmin(!!adminData);
+                if (profile && profile.estado === 'ACTIVO' && allowedRoles.includes(profile.rol)) {
+                    setHasAccess(true);
+                } else {
+                    setHasAccess(false);
+                }
             } else {
-                setIsAdmin(false);
+                setHasAccess(false);
             }
 
             setLoading(false);
         });
 
         return () => subscription.unsubscribe();
-    }, []);
+    }, [allowedRoles]);
 
     if (loading) {
         return (
@@ -63,8 +69,7 @@ const ProtectedRoute = () => {
         );
     }
 
-    if (!session || !isAdmin) {
-        // If not logged in or not an admin, redirect to login
+    if (!session || !hasAccess) {
         return <Navigate to="/login" replace />;
     }
 

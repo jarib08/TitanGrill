@@ -34,39 +34,46 @@ const Login = () => {
                 throw new Error('Error de autenticación.');
             }
 
-            // 2. Verify whitelist in admin_users table
-            const { data: adminData, error: adminError } = await supabase
-                .from('admin_users')
+            // 2. Verify whitelist in perfiles_trabajadores table
+            const { data: profileData, error: profileError } = await supabase
+                .from('perfiles_trabajadores')
                 .select('*')
                 .eq('id', authData.user.id)
                 .maybeSingle();
 
-            if (adminError) {
+            if (profileError) {
                 throw new Error('Error de verificación.');
             }
 
-            if (!adminData) {
+            if (!profileData || profileData.estado !== 'ACTIVO') {
                 await supabase.auth.signOut();
                 throw new Error('Acceso denegado.');
             }
 
-            // 3. Auto-Stamp Logic if clientId is present
-            if (clientId) {
-                const { data: rpcData, error: rpcError } = await supabase
-                    .rpc('increment_stamps', { client_id: clientId });
+            // 3. Redirection based on role
+            if (profileData.rol === 'ADMINISTRADOR') {
+                // Auto-Stamp Logic if clientId is present (admin only)
+                if (clientId) {
+                    const { data: rpcData, error: rpcError } = await supabase
+                        .rpc('increment_stamps', { client_id: clientId });
 
-                if (rpcError || !rpcData?.success) {
-                    throw new Error("Error al registrar sello.");
+                    if (rpcError || !rpcData?.success) {
+                        throw new Error("Error al registrar sello.");
+                    }
                 }
-            }
 
-            // Success
-            sessionStorage.setItem('titan_admin', 'true');
-
-            if (clientId) {
-                navigate(`/admin/client/${clientId}`);
+                sessionStorage.setItem('titan_admin', 'true');
+                if (clientId) {
+                    navigate(`/admin/client/${clientId}`);
+                } else {
+                    navigate('/admin');
+                }
+            } else if (profileData.rol === 'TRABAJADOR') {
+                sessionStorage.setItem('titan_worker', 'true');
+                navigate('/pos');
             } else {
-                navigate('/admin');
+                await supabase.auth.signOut();
+                throw new Error('Rol no reconocido.');
             }
 
         } catch (err) {

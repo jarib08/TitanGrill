@@ -22,6 +22,8 @@ const Login = lazy(() => import('./components/Login'));
 const AdminDashboard = lazy(() => import('./components/AdminDashboard'));
 const AdminClientView = lazy(() => import('./components/AdminClientView'));
 const ProtectedRoute = lazy(() => import('./components/ProtectedRoute'));
+const POS = lazy(() => import('./components/POS'));
+const DigitalMenu = lazy(() => import('./components/DigitalMenu'));
 
 // Landing Page Component
 const LandingPage = () => {
@@ -57,9 +59,15 @@ function App() {
                         {/* Public Routes */}
                         <Route path="/" element={<LandingPage />} />
                         <Route path="/login" element={<Login />} />
+                        <Route path="/menu" element={<DigitalMenu />} />
+
+                        {/* Protected Worker Routes */}
+                        <Route element={<ProtectedRoute allowedRoles={['ADMINISTRADOR', 'TRABAJADOR']} />}>
+                            <Route path="/pos" element={<POS />} />
+                        </Route>
 
                         {/* Protected Admin Routes */}
-                        <Route element={<ProtectedRoute />}>
+                        <Route element={<ProtectedRoute allowedRoles={['ADMINISTRADOR']} />}>
                             <Route path="/admin" element={<AdminDashboard />} />
                             <Route path="/admin/client/:clientId" element={<AdminClientView />} />
                         </Route>

@@ -1,6 +1,7 @@
 import React from 'react';
-import { ChevronDown } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { ChevronDown, ShoppingBag } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 const Hero = () => {
     const scrollToMenu = () => {
@@ -31,7 +32,7 @@ const Hero = () => {
                 >
                     <div className="inline-block border-b border-gold/50 pb-2 mb-6">
                         <span className="text-gold tracking-[0.4em] text-xs md:text-sm uppercase font-semibold">
-
+                            Hamburguesas Artesanales & Parrilla
                         </span>
                     </div>
 
@@ -44,23 +45,31 @@ const Hero = () => {
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     transition={{ delay: 0.6, duration: 1 }}
-                    className="text-lg md:text-2xl text-zinc-300 mb-12 font-light max-w-xl mx-auto font-sans leading-relaxed"
+                    className="text-lg md:text-2xl text-zinc-300 mb-10 font-light max-w-xl mx-auto font-sans leading-relaxed"
                 >
                     Fuego, sabor, y poder en cada bocado. <br />
-                    <span className="text-gold/80 italic font-serif">Únete al Club Exclusivo.</span>
+                    <span className="text-gold/80 italic font-serif">Pide en línea y recibe directamente en tu mesa o casa.</span>
                 </motion.p>
 
                 <motion.div
                     initial={{ scale: 0.9, opacity: 0 }}
                     animate={{ scale: 1, opacity: 1 }}
                     transition={{ delay: 1 }}
+                    className="flex flex-col sm:flex-row items-center justify-center gap-4"
                 >
+                    <Link
+                        to="/menu"
+                        className="w-full sm:w-auto bg-gradient-to-r from-orange-600 to-fire hover:from-orange-500 hover:to-fire text-white px-8 py-4 rounded-2xl uppercase tracking-wider text-xs font-extrabold shadow-2xl shadow-fire/40 transition-all flex items-center justify-center gap-2 hover:scale-105 active:scale-95 border border-fire/40"
+                    >
+                        <ShoppingBag size={18} />
+                        Hacer Pedido Ahora
+                    </Link>
+
                     <button
                         onClick={scrollToMenu}
-                        className="group relative px-10 py-4 bg-transparent overflow-hidden rounded-none border border-white/20 transition-all hover:border-gold hover:bg-gold/10"
+                        className="w-full sm:w-auto px-8 py-4 bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 hover:text-white rounded-2xl border border-zinc-700 transition-all uppercase tracking-widest text-xs font-bold"
                     >
-                        <div className="absolute inset-0 w-0 bg-gold/10 transition-all duration-250 ease-out group-hover:w-full"></div>
-                        <span className="relative text-white group-hover:text-gold uppercase tracking-[0.3em] text-xs font-bold">Ver Menú</span>
+                        Explorar Carta
                     </button>
                 </motion.div>
             </div>

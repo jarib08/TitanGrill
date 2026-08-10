@@ -18,10 +18,10 @@ const LeadPopup = () => {
     const [emailError, setEmailError] = useState('');
 
     // Referral system states
-    const [referralCode, setReferralCode] = useState(null);
+    const [, setReferralCode] = useState(null);
     const [referrerId, setReferrerId] = useState(null);
     const [referrerName, setReferrerName] = useState(null);
-    const [referralValidating, setReferralValidating] = useState(false);
+    const [, setReferralValidating] = useState(false);
 
     const [formData, setFormData] = useState({
         name: '',

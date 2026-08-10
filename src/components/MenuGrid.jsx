@@ -1,6 +1,7 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowUpRight } from 'lucide-react';
+import { ArrowUpRight, ShoppingBag } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import SelectionModal from './SelectionModal';
 
 // Data for Modals
@@ -153,6 +154,21 @@ const MenuGrid = () => {
                             </div>
                         </motion.div>
                     ))}
+                </div>
+
+                {/* CTA Banner to Digital Menu */}
+                <div className="mt-16 text-center bg-gradient-to-r from-zinc-900 via-zinc-900 to-zinc-950 border border-zinc-800 p-8 rounded-3xl max-w-3xl mx-auto shadow-2xl space-y-4">
+                    <h3 className="text-2xl font-serif text-white font-bold">¿Listo para probar el auténtico sabor Titan?</h3>
+                    <p className="text-sm text-zinc-400 max-w-md mx-auto">Explora nuestro menú interactivo completo, arma tu pedido a tu gusto y envíalo directamente por WhatsApp.</p>
+                    <div className="pt-2">
+                        <Link
+                            to="/menu"
+                            className="inline-flex items-center gap-2 bg-gradient-to-r from-orange-600 to-fire hover:from-orange-500 hover:to-fire text-white px-8 py-4 rounded-2xl text-xs font-extrabold uppercase tracking-widest shadow-xl shadow-fire/30 transition-all hover:scale-105 active:scale-95 border border-fire/40"
+                        >
+                            <ShoppingBag size={18} />
+                            Ver Todo el Menú y Pedir Virtualmente
+                        </Link>
+                    </div>
                 </div>
             </div>
 

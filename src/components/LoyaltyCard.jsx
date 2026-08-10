@@ -14,29 +14,25 @@ const LoyaltyCard = ({ client: initialClient }) => {
     const [shareStatus, setShareStatus] = useState('idle'); // 'idle' | 'sharing' | 'copied' | 'error'
 
     // State to track if we are verifying data against the server
-    // This prevents the "Prize Reached" overlay from flashing if local data is stale (e.g. shows 10 stamps but server has 0)
     const [isVerifying, setIsVerifying] = useState(true);
+    const [showBigQr, setShowBigQr] = useState(false);
 
-    // Efecto para sincronizar con Realtime
+    // Efecto para sincronizar con Realtime + Polling de respaldo en vivo (3s)
     useEffect(() => {
         if (!initialClient?.id) return;
 
         // 1. Sincronizar el estado inicial (y forzar refresh desde DB para asegurar datos frescos)
         const fetchLatestData = async () => {
-            // Primero mostramos lo que tengamos en localStorage/props para que no parpadee
             setClient(initialClient);
 
-            // Luego pedimos el dato fresco
             const { data, error } = await supabase
                 .from('clientes')
                 .select('*')
                 .eq('id', initialClient.id)
-                .single();
+                .maybeSingle();
 
             if (data && !error) {
-                console.log("Datos frescos cargados en tarjeta:", data);
                 setClient(data);
-                // Actualizamos también el localStorage para que la próxima vez sea más preciso
                 localStorage.setItem('titan_client', JSON.stringify(data));
             }
             setIsVerifying(false);
@@ -44,8 +40,26 @@ const LoyaltyCard = ({ client: initialClient }) => {
 
         fetchLatestData();
 
-        // 2. Suscribirse a cambios en la base de datos para este cliente
-        // IMPORTANTE: La tabla se llama 'clientes', NO 'clients'
+        // 2. Polling de respaldo cada 3 segundos por si el WebSocket móvil parpadea
+        const pollInterval = setInterval(async () => {
+            const { data, error } = await supabase
+                .from('clientes')
+                .select('*')
+                .eq('id', initialClient.id)
+                .maybeSingle();
+
+            if (data && !error) {
+                setClient(prev => {
+                    if (prev?.stamps_count !== data.stamps_count) {
+                        localStorage.setItem('titan_client', JSON.stringify(data));
+                        return data;
+                    }
+                    return prev;
+                });
+            }
+        }, 3000);
+
+        // 3. Suscribirse a cambios Postgres Realtime en tiempo real para este cliente
         const subscription = supabase
             .channel(`client-${initialClient.id}`)
             .on(
@@ -53,17 +67,21 @@ const LoyaltyCard = ({ client: initialClient }) => {
                 {
                     event: 'UPDATE',
                     schema: 'public',
-                    table: 'clientes', // Corregido de 'clients' a 'clientes'
+                    table: 'clientes',
                     filter: `id=eq.${initialClient.id}`
                 },
                 (payload) => {
-                    console.log('🔥 ¡Sello detectado en tiempo real!', payload.new);
-                    setClient(payload.new); // Esto actualiza los fuegos visualmente
+                    if (payload.new) {
+                        console.log('🔥 ¡Sello detectado en tiempo real!', payload.new);
+                        setClient(payload.new);
+                        localStorage.setItem('titan_client', JSON.stringify(payload.new));
+                    }
                 }
             )
             .subscribe();
 
         return () => {
+            clearInterval(pollInterval);
             subscription.unsubscribe();
         };
     }, [initialClient]);
@@ -121,9 +139,16 @@ const LoyaltyCard = ({ client: initialClient }) => {
 
                 {/* Main Content: QR + Grid */}
                 <div className="flex items-center gap-4">
-                    {/* QR Code */}
-                    <div className="bg-white p-2 rounded-2xl shrink-0 w-22 h-22 flex items-center justify-center shadow-lg">
+                    {/* QR Code - Clickable to expand */}
+                    <div 
+                        onClick={() => setShowBigQr(true)} 
+                        title="Toca para ampliar el código QR"
+                        className="bg-white p-2 rounded-2xl shrink-0 w-22 h-22 flex flex-col items-center justify-center shadow-lg cursor-pointer hover:scale-105 transition-transform relative group/qr"
+                    >
                         <QRCode value={qrValue} size={80} className="w-full h-full" />
+                        <span className="absolute -bottom-1 bg-fire text-white text-[8px] font-bold px-1.5 py-0.5 rounded-full shadow opacity-90 group-hover/qr:opacity-100 transition-opacity">
+                            🔍 Tocar
+                        </span>
                     </div>
 
                     {/* Stamps Grid */}
@@ -288,6 +313,56 @@ const LoyaltyCard = ({ client: initialClient }) => {
                                     Muestra esta pantalla al staff
                                 </p>
                             </div>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
+            {/* Modal: Big QR Code for Easy Scanning at Counter */}
+            <AnimatePresence>
+                {showBigQr && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        onClick={() => setShowBigQr(false)}
+                        className="fixed inset-0 bg-black/90 backdrop-blur-md z-[9999] flex flex-col items-center justify-center p-6"
+                    >
+                        <motion.div
+                            initial={{ scale: 0.8, y: 20 }}
+                            animate={{ scale: 1, y: 0 }}
+                            exit={{ scale: 0.8, y: 20 }}
+                            onClick={(e) => e.stopPropagation()}
+                            className="bg-zinc-900 border border-fire/40 rounded-3xl p-6 max-w-sm w-full text-center space-y-4 shadow-2xl relative"
+                        >
+                            <div className="flex justify-between items-center border-b border-zinc-800 pb-3">
+                                <h4 className="text-fire font-serif font-bold text-lg tracking-wide">Tarjeta Titan Grill</h4>
+                                <button
+                                    onClick={() => setShowBigQr(false)}
+                                    className="text-zinc-400 hover:text-white p-1.5 rounded-lg bg-zinc-800 text-xs font-bold transition-colors"
+                                >
+                                    ✕
+                                </button>
+                            </div>
+
+                            <div className="bg-white p-4 rounded-2xl mx-auto w-64 h-64 flex items-center justify-center shadow-2xl border-4 border-fire">
+                                <QRCode value={qrValue} size={230} className="w-full h-full" />
+                            </div>
+
+                            <div className="space-y-1">
+                                <p className="text-white font-bold text-base">{client?.nombre || 'Cliente'}</p>
+                                <p className="text-zinc-400 text-xs font-mono">{client?.stamps_count || 0} de 10 Fuegos</p>
+                                <p className="text-[11px] text-orange-400 font-medium pt-2">
+                                    🔍 Muestra este QR al personal en caja para escanear fácilmente.
+                                </p>
+                            </div>
+
+                            <button
+                                onClick={() => setShowBigQr(false)}
+                                className="w-full bg-fire hover:bg-orange-700 text-white py-3 rounded-xl text-xs font-bold uppercase tracking-wider transition-colors shadow-lg"
+                            >
+                                Cerrar Visor
+                            </button>
                         </motion.div>
                     </motion.div>
                 )}

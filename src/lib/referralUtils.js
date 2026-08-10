@@ -82,7 +82,7 @@ export const generateReferralURL = (referralCode, baseUrl = window.location.orig
  * @param {string} userName - Nombre del usuario (opcional)
  * @returns {string} Mensaje formateado para compartir
  */
-export const generateShareMessage = (referralCode, userName = '') => {
+export const generateShareMessage = (referralCode, _userName = '') => {
     const url = generateReferralURL(referralCode);
 
     return `¡Únete al Club de Titan Grill! Regístrate con mi link y obtén tu primer sello gratis: ${url}`;

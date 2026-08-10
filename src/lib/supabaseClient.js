@@ -1,21 +1,23 @@
 import { createClient } from '@supabase/supabase-js';
 import { ERROR_MESSAGES } from '../constants';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://mbyjehhplruoqlgphfvw.supabase.co';
+const envAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const LEGACY_JWT_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1ieWplaGhwbHJ1b3FsZ3BoZnZ3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjgyNTc0MjgsImV4cCI6MjA4MzgzMzQyOH0.XZBO_hn7kRsrNw5Pg9uC4C9eUq5VoSKuh6Txw4qwhyw';
+
+const supabaseAnonKey = (envAnonKey && envAnonKey.startsWith('eyJ')) ? envAnonKey : LEGACY_JWT_ANON_KEY;
 
 // Validate required environment variables
 if (!supabaseUrl || !supabaseAnonKey) {
     const errorMessage = ERROR_MESSAGES.SUPABASE_MISSING;
     console.error(errorMessage);
-    // In production, we throw to prevent the app from running with invalid config
     if (import.meta.env.PROD) {
         throw new Error(errorMessage);
     }
 }
 
 // Create Supabase client with options
-export const supabase = createClient(supabaseUrl || '', supabaseAnonKey || '', {
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     auth: {
         autoRefreshToken: true,
         persistSession: true,

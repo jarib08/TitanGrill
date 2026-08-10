@@ -5,7 +5,7 @@ import { motion } from 'framer-motion';
 const WhatsAppButton = () => {
     return (
         <motion.a
-            href="https://wa.me/3004126441" // Placeholder number
+            href="https://wa.me/573012000092" // Placeholder number
             target="_blank"
             rel="noopener noreferrer"
             className="fixed bottom-6 right-6 z-50 group flex items-center justify-center"

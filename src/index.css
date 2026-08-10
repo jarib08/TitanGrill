@@ -7,4 +7,28 @@
 
 html {
   scroll-behavior: smooth;
+}
+
+/* Custom QR Scanner styling - Hide default html5-qrcode ugly white brackets */
+#pos-qr-reader-region {
+  border: none !important;
+  background: transparent !important;
+}
+
+#pos-qr-reader-region img {
+  display: none !important;
+}
+
+#pos-qr-reader-region__dashboard,
+#pos-qr-reader-region__dashboard_section,
+#pos-qr-reader-region__status_span,
+#pos-qr-reader-region__header_message {
+  display: none !important;
+}
+
+#pos-qr-reader-region video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  border-radius: 1rem !important;
 }

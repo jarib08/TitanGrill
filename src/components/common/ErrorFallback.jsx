@@ -12,7 +12,7 @@ const ErrorFallback = ({ error, resetErrorBoundary }) => {
                 <p className="text-zinc-400 text-sm mb-4">
                     Ha ocurrido un error inesperado en la aplicaci\u00f3n.
                 </p>
-                {process.env.NODE_ENV === 'development' && error && (
+                {import.meta.env.DEV && error && (
                     <pre className="text-left text-xs text-red-400 bg-zinc-900 p-4 rounded-lg mb-6 overflow-auto max-h-32">
                         {error.message}
                     </pre>
