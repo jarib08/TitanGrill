@@ -102,11 +102,14 @@ const AdminDashboard = () => {
     const [editingProveedor, setEditingProveedor] = useState(null); // null, 'new', or id
     const [proveedorForm, setProveedorForm] = useState({ nombre: '', telefono: '', contacto: '', activo: true });
     const [editingCompra, setEditingCompra] = useState(null); // null or 'new'
-    const [compraForm, setCompraForm] = useState({ proveedor_id: '', observaciones: '', details: [] });
+    const [compraForm, setCompraForm] = useState({ proveedor_id: '', observaciones: '', details: [], metodo_pago: 'EFECTIVO' });
     const [selectedDetail, setSelectedDetail] = useState({ insumo_id: '', cantidad: 1, costo_unitario: 0 });
     const [compraInsumoSearch, setCompraInsumoSearch] = useState(''); // P0: búsqueda de insumo en compras
     const [showAnularModal, setShowAnularModal] = useState(null); // compra object
     const [anularMotivo, setAnularMotivo] = useState('');
+    // F6-05: modal de recepción con selector de método de pago
+    const [showRecibirModal, setShowRecibirModal] = useState(null); // compra object or null
+    const [recibirMetodoPago, setRecibirMetodoPago] = useState('EFECTIVO');
     const [topStampClients, setTopStampClients] = useState([]);
 
     // Liquidaciones & Rentabilidad states
@@ -1207,15 +1210,16 @@ const AdminDashboard = () => {
         try {
             const total = compraForm.details.reduce((sum, item) => sum + item.subtotal, 0);
 
-            // 1. Insert row to compras
+            // 1. Insert row to compras (F6-05: incluye metodo_pago)
             const { data: cmpData, error: cmpErr } = await supabase
                 .from('compras')
                 .insert([{
                     proveedor_id: compraForm.proveedor_id,
                     usuario_id: currentUserProfile?.id,
                     total,
-                    estado: 'BORRADOR', // Starts as BORRADOR
-                    observaciones: compraForm.observaciones || null
+                    estado: 'BORRADOR',
+                    observaciones: compraForm.observaciones || null,
+                    metodo_pago: shouldReceiveImmediate ? compraForm.metodo_pago : null
                 }])
                 .select()
                 .single();
@@ -1237,20 +1241,23 @@ const AdminDashboard = () => {
 
             if (detErr) throw detErr;
 
-            // 3. Receive immediately if checked
+            // 3. F6-05: Recibir inmediatamente con egreso financiero
             if (shouldReceiveImmediate) {
                 const { data: recData, error: recErr } = await supabase
-                    .rpc('recibir_compra', { p_compra_id: cmpData.id });
+                    .rpc('recibir_compra', {
+                        p_compra_id: cmpData.id,
+                        p_metodo_pago: compraForm.metodo_pago
+                    });
                 if (recErr) throw recErr;
                 if (recData && !recData.success) throw new Error(recData.message);
             }
 
             setEditingCompra(null);
-            setCompraForm({ proveedor_id: '', observaciones: '', details: [] });
+            setCompraForm({ proveedor_id: '', observaciones: '', details: [], metodo_pago: 'EFECTIVO' });
             setSelectedDetail({ insumo_id: '', cantidad: 1, costo_unitario: 0 });
             setCompraInsumoSearch('');
             await fetchCompras();
-            await fetchInventario(); // update stock metrics
+            await fetchInventario();
             alert('Compra registrada con éxito.');
         } catch (err) {
             console.error(err);
@@ -1260,17 +1267,28 @@ const AdminDashboard = () => {
         }
     };
 
-    const handleRecibirCompra = async (compraId) => {
-        if (!window.confirm('¿Confirmar recepción de compra? Se incrementará el stock de los insumos vinculados.')) return;
+    // F6-05: Abrir modal de recepción con selector de método de pago
+    const handleRecibirCompra = (compra) => {
+        setRecibirMetodoPago('EFECTIVO');
+        setShowRecibirModal(compra);
+    };
+
+    // F6-05: Confirmar recepción con egreso financiero
+    const handleConfirmarRecibir = async () => {
+        if (!showRecibirModal) return;
         setActionLoading(true);
         try {
-            const { data, error } = await supabase.rpc('recibir_compra', { p_compra_id: compraId });
+            const { data, error } = await supabase.rpc('recibir_compra', {
+                p_compra_id: showRecibirModal.id,
+                p_metodo_pago: recibirMetodoPago
+            });
             if (error) throw error;
             if (data && !data.success) throw new Error(data.message);
 
+            setShowRecibirModal(null);
             await fetchCompras();
             await fetchInventario();
-            alert('Compra recibida e inventario actualizado.');
+            alert(`Compra recibida. Inventario actualizado. Egreso de $${showRecibirModal.total?.toLocaleString() || 0} registrado en caja (${recibirMetodoPago}).`);
         } catch (err) {
             console.error(err);
             alert('Error al recibir compra: ' + err.message);
@@ -2707,12 +2725,6 @@ const AdminDashboard = () => {
                                 <span className="text-[10px] text-zinc-400 bg-zinc-950/50 inline-block px-2 py-0.5 rounded mt-2">Ventas netas cobradas</span>
                             </div>
 
-                            <div className="bg-zinc-900 border border-fire/40 p-5 rounded-2xl shadow-lg">
-                                <p className="text-fire text-[10px] uppercase tracking-widest font-bold mb-1">Costo de Ventas (COGS)</p>
-                                <h3 className="text-2xl font-bold text-white">${Math.round(cogsTotal || 0).toLocaleString()}</h3>
-                                <span className="text-[10px] text-zinc-400 bg-zinc-950/50 inline-block px-2 py-0.5 rounded mt-2">Costo de insumos consumidos</span>
-                            </div>
-
                             <div className="bg-zinc-900 border border-gold/40 p-5 rounded-2xl shadow-lg">
                                 <p className="text-gold text-[10px] uppercase tracking-widest font-bold mb-1">Utilidad Bruta</p>
                                 <h3 className="text-2xl font-bold text-gold">${Math.round((salesKPIs?.totalVentas || 0) - (cogsTotal || 0)).toLocaleString()}</h3>
@@ -2721,35 +2733,38 @@ const AdminDashboard = () => {
                                 </span>
                             </div>
 
+                            {/* F6-05: Gastos Operativos excluye egresos de compras para evitar doble conteo con COGS */}
                             <div className="bg-zinc-900 border border-red-500/30 p-5 rounded-2xl shadow-lg">
                                 <p className="text-red-400 text-[10px] uppercase tracking-widest font-bold mb-1">Gastos Operativos</p>
                                 <h3 className="text-2xl font-bold text-red-400">
                                     ${(
-                                        movementsList.filter(m => m.tipo === 'EGRESO').reduce((sum, m) => sum + Number(m.monto || 0), 0) +
+                                        movementsList.filter(m => m.tipo === 'EGRESO' && !m.compra_id).reduce((sum, m) => sum + Number(m.monto || 0), 0) +
                                         liquidacionesList.filter(l => l.estado === 'PAGADO').reduce((sum, l) => sum + Number(l.monto_calculado || 0), 0)
                                     ).toLocaleString()}
                                 </h3>
-                                <span className="text-[10px] text-zinc-400 bg-zinc-950/50 inline-block px-2 py-0.5 rounded mt-2">Egresos + Liquidaciones</span>
+                                <span className="text-[10px] text-zinc-400 bg-zinc-950/50 inline-block px-2 py-0.5 rounded mt-2">Liquidaciones + Otros Egresos (excl. Compras)</span>
                             </div>
 
                             <div className="bg-zinc-900 border border-blue-500/40 p-5 rounded-2xl shadow-lg">
                                 <p className="text-blue-400 text-[10px] uppercase tracking-widest font-bold mb-1">Utilidad Neta Operativa</p>
-                                <h3 className={`text-2xl font-bold ${((salesKPIs?.totalVentas || 0) - (cogsTotal || 0) - (movementsList.filter(m => m.tipo === 'EGRESO').reduce((sum, m) => sum + Number(m.monto || 0), 0) + liquidacionesList.filter(l => l.estado === 'PAGADO').reduce((sum, l) => sum + Number(l.monto_calculado || 0), 0))) >= 0
-                                        ? 'text-green-400'
-                                        : 'text-red-400'
-                                    }`}>
-                                    ${Math.round(
-                                        (salesKPIs?.totalVentas || 0) -
-                                        (cogsTotal || 0) -
-                                        (movementsList.filter(m => m.tipo === 'EGRESO').reduce((sum, m) => sum + Number(m.monto || 0), 0) + liquidacionesList.filter(l => l.estado === 'PAGADO').reduce((sum, l) => sum + Number(l.monto_calculado || 0), 0))
-                                    ).toLocaleString()}
-                                </h3>
-                                <span className="text-[10px] text-blue-300/60 bg-blue-500/10 inline-block px-2 py-0.5 rounded mt-2">
-                                    Margen Neto: {((salesKPIs?.totalVentas || 0) > 0 ? (
-                                        ((salesKPIs?.totalVentas || 0) - (cogsTotal || 0) - (movementsList.filter(m => m.tipo === 'EGRESO').reduce((sum, m) => sum + Number(m.monto || 0), 0) + liquidacionesList.filter(l => l.estado === 'PAGADO').reduce((sum, l) => sum + Number(l.monto_calculado || 0), 0))) / (salesKPIs?.totalVentas || 1) * 100
-                                    ).toFixed(1) : '0')}%
-                                </span>
+                                {/* F6-05: gastos = liquidaciones + egresos-no-compras (compras ya están en COGS) */}
+                                {(() => {
+                                    const gastosOp = movementsList.filter(m => m.tipo === 'EGRESO' && !m.compra_id).reduce((sum, m) => sum + Number(m.monto || 0), 0) +
+                                        liquidacionesList.filter(l => l.estado === 'PAGADO').reduce((sum, l) => sum + Number(l.monto_calculado || 0), 0);
+                                    const utilidad = (salesKPIs?.totalVentas || 0) - (cogsTotal || 0) - gastosOp;
+                                    return (
+                                        <>
+                                            <h3 className={`text-2xl font-bold ${utilidad >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                                ${Math.round(utilidad).toLocaleString()}
+                                            </h3>
+                                            <span className="text-[10px] text-blue-300/60 bg-blue-500/10 inline-block px-2 py-0.5 rounded mt-2">
+                                                Margen Neto: {((salesKPIs?.totalVentas || 0) > 0 ? (utilidad / (salesKPIs?.totalVentas || 1) * 100).toFixed(1) : '0')}%
+                                            </span>
+                                        </>
+                                    );
+                                })()}
                             </div>
+
                         </div>
 
                         {/* Detailed Financial Income Statement Table */}
@@ -4506,6 +4521,27 @@ const AdminDashboard = () => {
                                     </div>
                                 </div>
 
+                                {/* F6-05: Selector de método de pago — solo visible cuando se va a recibir */}
+                                <div className="border border-zinc-800 rounded-xl p-4 bg-zinc-950/40">
+                                    <p className="text-xs text-zinc-400 mb-2 font-semibold uppercase tracking-wider">Método de pago (requerido al recibir)</p>
+                                    <div className="flex gap-2">
+                                        {['EFECTIVO', 'NEQUI', 'BANCOLOMBIA'].map(m => (
+                                            <button
+                                                key={m}
+                                                type="button"
+                                                onClick={() => setCompraForm(f => ({ ...f, metodo_pago: m }))}
+                                                className={`px-4 py-2 rounded-lg text-xs font-bold border transition-all ${
+                                                    compraForm.metodo_pago === m
+                                                        ? 'bg-fire text-white border-fire'
+                                                        : 'bg-zinc-900 text-zinc-400 border-zinc-700 hover:border-fire/50'
+                                                }`}
+                                            >
+                                                {m}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
                                 <div className="flex flex-wrap gap-3 border-t border-zinc-800 pt-4">
                                     <button
                                         onClick={() => handleSaveCompra(false)}
@@ -4519,7 +4555,7 @@ const AdminDashboard = () => {
                                         disabled={actionLoading}
                                         className="bg-fire hover:bg-orange-700 text-white px-5 py-2.5 rounded-lg text-xs font-bold transition-all disabled:opacity-50"
                                     >
-                                        Guardar y Recibir Stock
+                                        Guardar y Recibir (egreso {compraForm.metodo_pago})
                                     </button>
                                     <button
                                         onClick={() => { setEditingCompra(null); setCompraInsumoSearch(''); setSelectedDetail({ insumo_id: '', cantidad: 1, costo_unitario: 0 }); }}
@@ -4703,7 +4739,7 @@ const AdminDashboard = () => {
                                                                 {cmp.estado === 'BORRADOR' && (
                                                                     <>
                                                                         <button
-                                                                            onClick={() => handleRecibirCompra(cmp.id)}
+                                                                            onClick={() => handleRecibirCompra(cmp)}
                                                                             disabled={actionLoading}
                                                                             className="bg-green-950/20 text-green-400 px-2 py-1 rounded font-bold text-[10px] hover:bg-green-950/40 disabled:opacity-50 disabled:cursor-not-allowed"
                                                                         >
@@ -4769,6 +4805,53 @@ const AdminDashboard = () => {
                                 className="w-full bg-fire text-white py-2 rounded-lg text-xs font-bold hover:bg-orange-700 transition-all disabled:opacity-50 uppercase tracking-wider"
                             >
                                 {actionLoading ? 'Procesando...' : 'Confirmar Anulación'}
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* F6-05: Modal de recepción de compra con selector de método de pago */}
+                {showRecibirModal && (
+                    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[999]">
+                        <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-2xl relative space-y-5">
+                            <div className="flex justify-between items-center border-b border-zinc-800 pb-3">
+                                <h3 className="text-lg font-bold font-serif text-white">Recibir Compra</h3>
+                                <button onClick={() => setShowRecibirModal(null)} className="text-zinc-500 hover:text-white text-xl">×</button>
+                            </div>
+                            <div className="space-y-4">
+                                <p className="text-sm text-zinc-300">
+                                    Confirmar recepción de compra por&nbsp;
+                                    <span className="text-fire font-bold">${Number(showRecibirModal.total || 0).toLocaleString()}</span>
+                                </p>
+                                <div>
+                                    <label className="text-[10px] uppercase tracking-wider font-bold text-zinc-400 block mb-2">Método de pago *</label>
+                                    <div className="flex gap-2">
+                                        {['EFECTIVO', 'NEQUI', 'BANCOLOMBIA'].map(m => (
+                                            <button
+                                                key={m}
+                                                type="button"
+                                                onClick={() => setRecibirMetodoPago(m)}
+                                                className={`flex-1 py-2.5 rounded-lg text-xs font-bold border transition-all ${
+                                                    recibirMetodoPago === m
+                                                        ? 'bg-fire text-white border-fire'
+                                                        : 'bg-zinc-950 text-zinc-400 border-zinc-700 hover:border-fire/50'
+                                                }`}
+                                            >
+                                                {m}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                                <p className="text-[10px] text-zinc-500">
+                                    Se registrará un egreso en caja por ${Number(showRecibirModal.total || 0).toLocaleString()} ({recibirMetodoPago}) y se actualizará el inventario.
+                                </p>
+                            </div>
+                            <button
+                                onClick={handleConfirmarRecibir}
+                                disabled={actionLoading}
+                                className="w-full bg-green-700 hover:bg-green-600 text-white py-2.5 rounded-lg text-xs font-bold transition-all disabled:opacity-50 uppercase tracking-wider"
+                            >
+                                {actionLoading ? 'Procesando...' : `Confirmar Recepción (${recibirMetodoPago})`}
                             </button>
                         </div>
                     </div>
