@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { Users, Flame, Trophy, LogOut, ArrowRight, Award, Gift, DollarSign, Settings, ShoppingBag, Menu, X, Check, ShieldAlert, UtensilsCrossed, Plus, Pencil, PackageCheck, PackageX, Archive, ClipboardList, Trash2, Truck, FileText, Calendar, Filter, ShoppingCart, Package, AlertTriangle, Clock, TrendingUp, PiggyBank, Star, BarChart3, Search } from 'lucide-react';
+import { Users, Flame, Trophy, LogOut, ArrowRight, Award, Gift, DollarSign, Settings, ShoppingBag, Menu, X, Check, ShieldAlert, UtensilsCrossed, Plus, Pencil, PackageCheck, PackageX, Archive, ClipboardList, Trash2, Truck, FileText, Calendar, Filter, ShoppingCart, Package, AlertTriangle, Clock, TrendingUp, PiggyBank, Star, BarChart3, Search, Receipt } from 'lucide-react';
 import { useNavigate, Link } from 'react-router-dom';
 import { ComposedChart, Area, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, Legend } from 'recharts';
 import { BottomSheet } from './ui/BottomSheet.jsx';
@@ -147,6 +147,21 @@ const AdminDashboard = () => {
     const [liqTotal, setLiqTotal]       = useState(0);
     const [liqLoading, setLiqLoading]   = useState(false);
     const [liqError, setLiqError]       = useState(null);
+
+    // Gastos — estado paginado independiente y variables del formulario
+    const [gastosPage, setGastosPage] = useState(0);
+    const [gastosPageData, setGastosPageData] = useState([]);
+    const [gastosTotal, setGastosTotal] = useState(0);
+    const [gastosLoading, setGastosLoading] = useState(false);
+    const [gastosError, setGastosError] = useState(null);
+    const [gastosList, setGastosList] = useState([]); // global for KPIs
+    const [categoriasGastosList, setCategoriasGastosList] = useState([]);
+    const [showNewGastoModal, setShowNewGastoModal] = useState(false);
+    const [gastoForm, setGastoForm] = useState({ categoria_id: '', descripcion: '', monto: '', metodo_pago: 'EFECTIVO' });
+    const [showNewCategoriaModal, setShowNewCategoriaModal] = useState(false);
+    const [categoriaForm, setCategoriaForm] = useState({ nombre: '', activo: true });
+    const [showAnularGastoModal, setShowAnularGastoModal] = useState(null); // Gasto object or null
+    const [anularGastoMotivo, setAnularGastoMotivo] = useState('');
     // ─────────────────────────────────────────────────────────────────────────
 
     const fetchDashboardData = async () => {
@@ -251,6 +266,13 @@ const AdminDashboard = () => {
                 .order('fecha', { ascending: false });
             setLiquidacionesList(liqs || []);
 
+            // 11. Fetch Gastos List (global for KPIs)
+            const { data: expenses } = await supabase
+                .from('gastos')
+                .select('*, categorias_gastos(nombre)')
+                .order('fecha', { ascending: false });
+            setGastosList(expenses || []);
+
             // 10. Fetch COGS (Cost of Sales)
             const { data: saleMovements } = await supabase
                 .from('movimientos_inventario')
@@ -318,6 +340,41 @@ const AdminDashboard = () => {
         }
     };
 
+    const fetchCategoriasGastos = async () => {
+        try {
+            const { data, error } = await supabase
+                .from('categorias_gastos')
+                .select('*')
+                .order('nombre', { ascending: true });
+            if (error) throw error;
+            setCategoriasGastosList(data || []);
+        } catch (err) {
+            console.error('Error fetching categories:', err);
+        }
+    };
+
+    const fetchGastosPage = async (page = 0) => {
+        setGastosLoading(true);
+        setGastosError(null);
+        try {
+            const from = page * PAGE_SIZE;
+            const to = from + PAGE_SIZE - 1;
+            const { data, count, error } = await supabase
+                .from('gastos')
+                .select('id, fecha, descripcion, monto, metodo_pago, estado, created_by, categorias_gastos(nombre), perfiles_trabajadores(nombre)', { count: 'exact' })
+                .order('fecha', { ascending: false })
+                .range(from, to);
+            if (error) throw error;
+            setGastosPageData(data || []);
+            setGastosTotal(count || 0);
+            setGastosPage(page);
+        } catch (err) {
+            setGastosError(err.message || 'Error al cargar gastos.');
+        } finally {
+            setGastosLoading(false);
+        }
+    };
+
     const fetchLiqPage = async (page = 0) => {
         setLiqLoading(true);
         setLiqError(null);
@@ -366,6 +423,9 @@ const AdminDashboard = () => {
             fetchMovementsPage(0); // Fase 6.3 — carga página 0 al entrar al tab
         } else if (activeTab === 'liquidaciones') {
             fetchLiqPage(0); // Fase 6.3 — carga página 0 al entrar al tab
+        } else if (activeTab === 'gastos') {
+            fetchCategoriasGastos();
+            fetchGastosPage(0);
         }
     }, [activeTab]);
 
@@ -1379,6 +1439,101 @@ const AdminDashboard = () => {
         }
     };
 
+    const handleRegistrarGasto = async () => {
+        if (!gastoForm.categoria_id) {
+            alert('Debe seleccionar una categoría.');
+            return;
+        }
+        if (!gastoForm.monto || Number(gastoForm.monto) <= 0) {
+            alert('El monto debe ser mayor a cero.');
+            return;
+        }
+        setActionLoading(true);
+        try {
+            const { data, error } = await supabase.rpc('crear_gasto', {
+                p_categoria_id: gastoForm.categoria_id,
+                p_descripcion: gastoForm.descripcion,
+                p_monto: Number(gastoForm.monto),
+                p_metodo_pago: gastoForm.metodo_pago
+            });
+
+            if (error) throw error;
+            if (data && !data.success) {
+                throw new Error(data.message || 'Error desconocido del servidor');
+            }
+
+            alert('Gasto registrado exitosamente.');
+            setShowNewGastoModal(false);
+            setGastoForm({ categoria_id: '', descripcion: '', monto: '', metodo_pago: 'EFECTIVO' });
+            await fetchGastosPage(0);
+            await fetchDashboardData();
+        } catch (err) {
+            console.error(err);
+            alert('Error al registrar gasto: ' + err.message);
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
+    const handleAnularGasto = async () => {
+        if (!showAnularGastoModal) return;
+        if (!anularGastoMotivo.trim()) {
+            alert('Debe especificar un motivo para la anulación.');
+            return;
+        }
+        setActionLoading(true);
+        try {
+            const { data, error } = await supabase.rpc('anular_gasto', {
+                p_gasto_id: showAnularGastoModal.id,
+                p_motivo: anularGastoMotivo
+            });
+
+            if (error) throw error;
+            if (data && !data.success) {
+                throw new Error(data.message || 'Error al anular gasto');
+            }
+
+            alert('Gasto anulado correctamente.');
+            setShowAnularGastoModal(null);
+            setAnularGastoMotivo('');
+            await fetchGastosPage(gastosPage);
+            await fetchDashboardData();
+        } catch (err) {
+            console.error(err);
+            alert('Error al anular gasto: ' + err.message);
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
+    const handleCrearCategoria = async () => {
+        if (!categoriaForm.nombre.trim()) {
+            alert('El nombre de la categoría es obligatorio.');
+            return;
+        }
+        setActionLoading(true);
+        try {
+            const { error } = await supabase
+                .from('categorias_gastos')
+                .insert({
+                    nombre: categoriaForm.nombre.trim(),
+                    activo: true
+                });
+
+            if (error) throw error;
+
+            alert('Categoría creada exitosamente.');
+            setShowNewCategoriaModal(false);
+            setCategoriaForm({ nombre: '', activo: true });
+            await fetchCategoriasGastos();
+        } catch (err) {
+            console.error(err);
+            alert('Error al crear categoría: ' + err.message);
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
     if (loading) {
         return <div className="min-h-screen bg-black flex items-center justify-center text-fire animate-pulse font-serif text-xl">Cargando Tablero...</div>;
     }
@@ -1395,6 +1550,7 @@ const AdminDashboard = () => {
         { id: 'clientes',      label: 'Clientes / Fidelización', mobileLabel: 'Clientes',   icon: Users },
         { id: 'trabajadores',  label: 'Trabajadores',            mobileLabel: 'Staff',      icon: Award },
         { id: 'rentabilidad',  label: 'Rentabilidad / Finanzas', mobileLabel: 'Finanzas',   icon: TrendingUp },
+        { id: 'gastos',        label: 'Gastos Operativos',       mobileLabel: 'Gastos',     icon: Receipt },
         { id: 'analitica',     label: 'Analítica (Pareto 80/20)',mobileLabel: 'Analítica',  icon: BarChart3 },
         { id: 'liquidaciones', label: 'Liquidaciones Staff',     mobileLabel: 'Nómina',     icon: DollarSign },
         { id: 'productos',     label: 'Productos / Menú',        mobileLabel: 'Productos',  icon: UtensilsCrossed },
@@ -2788,7 +2944,7 @@ const AdminDashboard = () => {
                                 </div>
                                 <div className="flex justify-between items-center py-2.5 border-b border-zinc-800 text-sm">
                                     <span className="font-semibold text-zinc-300">(-) Egresos y Salidas de Caja</span>
-                                    <span className="font-bold text-red-400">-${movementsList.filter(m => m.tipo === 'EGRESO').reduce((sum, m) => sum + Number(m.monto || 0), 0).toLocaleString()}</span>
+                                    <span className="font-bold text-red-400">-${movementsList.filter(m => m.tipo === 'EGRESO' && !m.compra_id).reduce((sum, m) => sum + Number(m.monto || 0), 0).toLocaleString()}</span>
                                 </div>
                                 <div className="flex justify-between items-center py-2.5 border-b border-zinc-800 text-sm">
                                     <span className="font-semibold text-zinc-300">(-) Nomina y Liquidaciones Pagadas</span>
@@ -2797,14 +2953,14 @@ const AdminDashboard = () => {
                                 <div className="flex justify-between items-center py-4 bg-zinc-950 px-4 rounded-xl text-lg font-bold border border-zinc-800">
                                     <span className="text-white">(=) RESULTADO OPERATIVO NETO</span>
                                     <span className={
-                                        ((salesKPIs?.totalVentas || 0) - (cogsTotal || 0) - (movementsList.filter(m => m.tipo === 'EGRESO').reduce((sum, m) => sum + Number(m.monto || 0), 0) + liquidacionesList.filter(l => l.estado === 'PAGADO').reduce((sum, l) => sum + Number(l.monto_calculado || 0), 0))) >= 0
+                                        ((salesKPIs?.totalVentas || 0) - (cogsTotal || 0) - (movementsList.filter(m => m.tipo === 'EGRESO' && !m.compra_id).reduce((sum, m) => sum + Number(m.monto || 0), 0) + liquidacionesList.filter(l => l.estado === 'PAGADO').reduce((sum, l) => sum + Number(l.monto_calculado || 0), 0))) >= 0
                                             ? 'text-green-400'
                                             : 'text-red-400'
                                     }>
                                         ${Math.round(
                                             (salesKPIs?.totalVentas || 0) -
                                             (cogsTotal || 0) -
-                                            (movementsList.filter(m => m.tipo === 'EGRESO').reduce((sum, m) => sum + Number(m.monto || 0), 0) + liquidacionesList.filter(l => l.estado === 'PAGADO').reduce((sum, l) => sum + Number(l.monto_calculado || 0), 0))
+                                            (movementsList.filter(m => m.tipo === 'EGRESO' && !m.compra_id).reduce((sum, m) => sum + Number(m.monto || 0), 0) + liquidacionesList.filter(l => l.estado === 'PAGADO').reduce((sum, l) => sum + Number(l.monto_calculado || 0), 0))
                                         ).toLocaleString()}
                                     </span>
                                 </div>
@@ -3321,6 +3477,163 @@ const AdminDashboard = () => {
                     </div>
                 )}
 
+
+                {activeTab === 'gastos' && (
+                    <div className="space-y-6">
+                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                            <SectionHeader
+                                title="Gastos Operativos"
+                                subtitle="Registro de egresos operacionales, categorías y trazabilidad de caja"
+                                icon={Receipt}
+                            />
+                            {currentUserProfile?.es_socio && (
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={() => {
+                                            setGastoForm({ categoria_id: categoriasGastosList[0]?.id || '', descripcion: '', monto: '', metodo_pago: 'EFECTIVO' });
+                                            setShowNewGastoModal(true);
+                                        }}
+                                        className="bg-fire hover:bg-orange-700 text-white px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 shadow-lg active:scale-95 transition-all"
+                                    >
+                                        <Plus size={16} /> 💸 Registrar Gasto
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            setCategoriaForm({ nombre: '', activo: true });
+                                            setShowNewCategoriaModal(true);
+                                        }}
+                                        className="bg-zinc-800 hover:bg-zinc-700 text-white px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 border border-zinc-700 active:scale-95 transition-all"
+                                    >
+                                        <Plus size={16} /> 📁 Nueva Categoría
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Gastos stats */}
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
+                            <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl shadow-lg">
+                                <p className="text-zinc-400 text-[10px] uppercase tracking-widest font-bold mb-1">Total Gastos Registrados</p>
+                                <h3 className="text-2xl font-bold text-white">${gastosList.filter(g => g.estado === 'REGISTRADO').reduce((sum, g) => sum + Number(g.monto || 0), 0).toLocaleString()}</h3>
+                                <span className="text-[10px] text-zinc-500 block mt-1">Excluye gastos anulados</span>
+                            </div>
+                            <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl shadow-lg">
+                                <p className="text-zinc-400 text-[10px] uppercase tracking-widest font-bold mb-1">Transacciones Activas</p>
+                                <h3 className="text-2xl font-bold text-gold">{gastosList.filter(g => g.estado === 'REGISTRADO').length}</h3>
+                                <span className="text-[10px] text-zinc-500 block mt-1">Gastos vigentes en caja</span>
+                            </div>
+                            <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl shadow-lg">
+                                <p className="text-zinc-400 text-[10px] uppercase tracking-widest font-bold mb-1">Gastos Anulados</p>
+                                <h3 className="text-2xl font-bold text-red-500">${gastosList.filter(g => g.estado === 'ANULADO').reduce((sum, g) => sum + Number(g.monto || 0), 0).toLocaleString()}</h3>
+                                <span className="text-[10px] text-zinc-500 block mt-1">Historial de anulaciones revertidas</span>
+                            </div>
+                        </div>
+
+                        {/* Gastos Table */}
+                        <div className="bg-zinc-900 border border-zinc-800/60 rounded-2xl overflow-hidden shadow-2xl">
+                            <div className="p-4 border-b border-zinc-800 bg-zinc-950/40 flex justify-between items-center">
+                                <span className="text-xs font-bold text-zinc-400">Listado de Gastos</span>
+                                <span className="text-xs text-zinc-500">Página {gastosPage + 1} • {gastosTotal} registros</span>
+                            </div>
+
+                            {gastosLoading ? (
+                                <div className="flex items-center justify-center py-16 gap-3 text-zinc-500">
+                                    <svg className="animate-spin w-5 h-5 text-fire" viewBox="0 0 24 24" fill="none">
+                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                                    </svg>
+                                    <span className="text-sm">Cargando gastos…</span>
+                                </div>
+                            ) : gastosError ? (
+                                <div className="p-10 text-center text-red-400 text-sm">
+                                    ❌ Error al cargar gastos: {gastosError}
+                                </div>
+                            ) : gastosPageData.length === 0 ? (
+                                <div className="p-10 text-center text-zinc-500 text-sm">
+                                    Sin gastos registrados.
+                                </div>
+                            ) : (
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-left text-xs border-collapse">
+                                        <thead>
+                                            <tr className="border-b border-zinc-800 bg-zinc-950/20 text-zinc-400 uppercase font-bold tracking-wider text-[10px]">
+                                                <th className="p-4">Fecha</th>
+                                                <th className="p-4">Categoría</th>
+                                                <th className="p-4">Descripción</th>
+                                                <th className="p-4">Monto</th>
+                                                <th className="p-4">Método Pago</th>
+                                                <th className="p-4">Creado Por</th>
+                                                <th className="p-4">Estado</th>
+                                                {currentUserProfile?.es_socio && <th className="p-4 text-right">Acciones</th>}
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-zinc-850">
+                                            {gastosPageData.map(g => (
+                                                <tr key={g.id} className="hover:bg-zinc-950/40 transition-colors">
+                                                    <td className="p-4 text-zinc-350 whitespace-nowrap">
+                                                        {new Date(g.fecha).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                                    </td>
+                                                    <td className="p-4 font-bold text-zinc-200">
+                                                        {g.categorias_gastos?.nombre || 'General'}
+                                                    </td>
+                                                    <td className="p-4 text-zinc-350 max-w-xs truncate">
+                                                        {g.descripcion || '-'}
+                                                    </td>
+                                                    <td className="p-4 font-bold text-white text-sm">
+                                                        ${Number(g.monto || 0).toLocaleString()}
+                                                    </td>
+                                                    <td className="p-4 text-zinc-400 font-mono">
+                                                        {g.metodo_pago}
+                                                    </td>
+                                                    <td className="p-4 text-zinc-400">
+                                                        {g.perfiles_trabajadores?.nombre || 'Sistema'}
+                                                    </td>
+                                                    <td className="p-4">
+                                                        <span className={`inline-block px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                                                            g.estado === 'REGISTRADO' 
+                                                                ? 'bg-green-500/10 text-green-400 border border-green-500/25' 
+                                                                : 'bg-zinc-800 text-zinc-500 border border-zinc-700/50'
+                                                        }`}>
+                                                            {g.estado}
+                                                        </span>
+                                                    </td>
+                                                    {currentUserProfile?.es_socio && (
+                                                        <td className="p-4 text-right">
+                                                            {g.estado === 'REGISTRADO' ? (
+                                                                <button
+                                                                    onClick={() => {
+                                                                        setAnularGastoMotivo('');
+                                                                        setShowAnularGastoModal(g);
+                                                                    }}
+                                                                    className="bg-red-500/10 hover:bg-red-500 text-red-400 hover:text-white px-3 py-1.5 rounded-xl border border-red-500/20 text-[10px] font-bold transition-all"
+                                                                >
+                                                                    Anular
+                                                                </button>
+                                                            ) : (
+                                                                <span className="text-[10px] text-zinc-650 font-bold italic">N/A</span>
+                                                            )}
+                                                        </td>
+                                                    )}
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+
+                            {!gastosLoading && !gastosError && (
+                                <Pagination
+                                    currentPage={gastosPage}
+                                    totalPages={Math.ceil(gastosTotal / PAGE_SIZE)}
+                                    totalItems={gastosTotal}
+                                    pageSize={PAGE_SIZE}
+                                    onPrev={() => fetchGastosPage(gastosPage - 1)}
+                                    onNext={() => fetchGastosPage(gastosPage + 1)}
+                                />
+                            )}
+                        </div>
+                    </div>
+                )}
 
                 {activeTab === 'trabajadores' && (
                     <div className="space-y-6">
@@ -4956,7 +5269,8 @@ const AdminDashboard = () => {
                     </div>
                 )}
 
-                {/* Modal Generar Liquidación */}
+
+
                 {showGenerarLiqModal && (
                     <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[999]">
                         <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-2xl relative space-y-4 font-sans">
@@ -5030,6 +5344,156 @@ const AdminDashboard = () => {
                                 className="w-full bg-fire hover:bg-orange-700 text-white py-3 rounded-lg font-bold transition-all uppercase tracking-wider text-xs shadow-lg disabled:opacity-50"
                             >
                                 {actionLoading ? 'Procesando...' : '💾 Confirmar Liquidación'}
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Modal Registrar Gasto */}
+                {showNewGastoModal && (
+                    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[999]">
+                        <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-2xl relative space-y-4 font-sans">
+                            <div className="flex justify-between items-center border-b border-zinc-800 pb-3">
+                                <h3 className="text-lg font-bold font-serif text-white flex items-center gap-2">
+                                    <Receipt className="text-fire" size={20} />
+                                    Registrar Gasto Operativo
+                                </h3>
+                                <button onClick={() => setShowNewGastoModal(false)} className="text-zinc-500 hover:text-white">✕</button>
+                            </div>
+
+                            <div className="space-y-3 text-xs">
+                                <div>
+                                    <label className="text-[10px] font-bold uppercase text-zinc-400 block mb-1">Categoría *</label>
+                                    <select
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-white outline-none focus:border-fire"
+                                        value={gastoForm.categoria_id}
+                                        onChange={(e) => setGastoForm({ ...gastoForm, categoria_id: e.target.value })}
+                                    >
+                                        <option value="">Seleccione una categoría</option>
+                                        {categoriasGastosList.filter(c => c.activo).map(c => (
+                                            <option key={c.id} value={c.id}>{c.nombre}</option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                <div>
+                                    <label className="text-[10px] font-bold uppercase text-zinc-400 block mb-1">Descripción / Justificación</label>
+                                    <input
+                                        type="text"
+                                        placeholder="Ej. Compra de bombillos, reparación de parrilla..."
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-white outline-none focus:border-fire text-sm"
+                                        value={gastoForm.descripcion}
+                                        onChange={(e) => setGastoForm({ ...gastoForm, descripcion: e.target.value })}
+                                    />
+                                </div>
+
+                                <div>
+                                    <label className="text-[10px] font-bold uppercase text-zinc-400 block mb-1">Monto ($) *</label>
+                                    <input
+                                        type="number"
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-white outline-none focus:border-fire font-bold text-sm"
+                                        value={gastoForm.monto}
+                                        onChange={(e) => setGastoForm({ ...gastoForm, monto: e.target.value })}
+                                    />
+                                </div>
+
+                                <div>
+                                    <label className="text-[10px] font-bold uppercase text-zinc-400 block mb-1">Método de Pago *</label>
+                                    <select
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-white outline-none focus:border-fire"
+                                        value={gastoForm.metodo_pago}
+                                        onChange={(e) => setGastoForm({ ...gastoForm, metodo_pago: e.target.value })}
+                                    >
+                                        <option value="EFECTIVO">EFECTIVO</option>
+                                        <option value="NEQUI">NEQUI</option>
+                                        <option value="BANCOLOMBIA">BANCOLOMBIA</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <button
+                                onClick={handleRegistrarGasto}
+                                disabled={actionLoading}
+                                className="w-full bg-fire hover:bg-orange-700 text-white py-3 rounded-lg font-bold transition-all uppercase tracking-wider text-xs shadow-lg disabled:opacity-50"
+                            >
+                                {actionLoading ? 'Procesando...' : '💾 Registrar Gasto'}
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Modal Nueva Categoría */}
+                {showNewCategoriaModal && (
+                    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[999]">
+                        <div className="w-full max-w-sm bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-2xl relative space-y-4 font-sans">
+                            <div className="flex justify-between items-center border-b border-zinc-800 pb-3">
+                                <h3 className="text-base font-bold font-serif text-white flex items-center gap-2">
+                                    📁 Nueva Categoría de Gasto
+                                </h3>
+                                <button onClick={() => setShowNewCategoriaModal(false)} className="text-zinc-500 hover:text-white">✕</button>
+                            </div>
+
+                            <div className="space-y-3 text-xs">
+                                <div>
+                                    <label className="text-[10px] font-bold uppercase text-zinc-400 block mb-1">Nombre *</label>
+                                    <input
+                                        type="text"
+                                        placeholder="Ej. Publicidad, Gas, Electricidad..."
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-white outline-none focus:border-fire text-sm"
+                                        value={categoriaForm.nombre}
+                                        onChange={(e) => setCategoriaForm({ ...categoriaForm, nombre: e.target.value })}
+                                    />
+                                </div>
+                            </div>
+
+                            <button
+                                onClick={handleCrearCategoria}
+                                disabled={actionLoading}
+                                className="w-full bg-fire hover:bg-orange-700 text-white py-2.5 rounded-lg font-bold transition-all uppercase tracking-wider text-xs shadow-lg disabled:opacity-50"
+                            >
+                                {actionLoading ? 'Guardando...' : '💾 Guardar Categoría'}
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Modal Anular Gasto */}
+                {showAnularGastoModal && (
+                    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[999]">
+                        <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-2xl relative space-y-4 font-sans">
+                            <div className="flex justify-between items-center border-b border-zinc-800 pb-3">
+                                <h3 className="text-base font-bold font-serif text-red-400 flex items-center gap-2">
+                                    ⚠️ Confirmar Anulación de Gasto
+                                </h3>
+                                <button onClick={() => setShowAnularGastoModal(null)} className="text-zinc-500 hover:text-white">✕</button>
+                            </div>
+
+                            <div className="space-y-3 text-xs">
+                                <p className="text-zinc-400">
+                                    ¿Está seguro que desea anular el gasto registrado por <span className="font-bold text-white">${Number(showAnularGastoModal.monto || 0).toLocaleString()}</span>?
+                                </p>
+                                <p className="text-zinc-500 text-[10px]">
+                                    Esta acción preservará el registro de egreso original y creará un ingreso compensatorio automático del mismo valor en caja para corregir el saldo financiero.
+                                </p>
+
+                                <div>
+                                    <label className="text-[10px] font-bold uppercase text-zinc-400 block mb-1">Motivo de Anulación *</label>
+                                    <input
+                                        type="text"
+                                        placeholder="Ej. Registro duplicado, error en monto..."
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-white outline-none focus:border-fire text-sm"
+                                        value={anularGastoMotivo}
+                                        onChange={(e) => setAnularGastoMotivo(e.target.value)}
+                                    />
+                                </div>
+                            </div>
+
+                            <button
+                                onClick={handleAnularGasto}
+                                disabled={actionLoading}
+                                className="w-full bg-red-600 hover:bg-red-700 text-white py-3 rounded-lg font-bold transition-all uppercase tracking-wider text-xs shadow-lg disabled:opacity-50"
+                            >
+                                {actionLoading ? 'Procesando...' : '⚠️ Confirmar Anulación'}
                             </button>
                         </div>
                     </div>
