@@ -120,6 +120,8 @@ const AdminDashboard = () => {
     const [liqMontoForm, setLiqMontoForm] = useState(0);
     const [liqModalidadForm, setLiqModalidadForm] = useState('POR_TURNO');
     const [liqObsForm, setLiqObsForm] = useState('');
+    const [showAnularLiqModal, setShowAnularLiqModal] = useState(null); // Liquidacion object or null
+    const [anularLiqMotivo, setAnularLiqMotivo] = useState('');
 
     // Error states
     const [fetchError, setFetchError] = useState(null);
@@ -1434,6 +1436,31 @@ const AdminDashboard = () => {
         } catch (err) {
             console.error(err);
             alert('Error al generar liquidación: ' + err.message);
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
+    const handleAnularLiquidacion = async () => {
+        if (!showAnularLiqModal?.id) return;
+        setActionLoading(true);
+        try {
+            const { data, error } = await supabase.rpc('anular_liquidacion', {
+                p_liquidacion_id: showAnularLiqModal.id,
+                p_motivo: anularLiqMotivo || 'Anulación por administrador'
+            });
+
+            if (error) throw error;
+            if (data && !data.success) throw new Error(data.message);
+
+            alert(data?.message || '¡Liquidación anulada exitosamente!');
+            setShowAnularLiqModal(null);
+            setAnularLiqMotivo('');
+            await fetchDashboardData();
+            await fetchLiqPage(liqPage);
+        } catch (err) {
+            console.error(err);
+            alert('Error al anular la liquidación: ' + err.message);
         } finally {
             setActionLoading(false);
         }
@@ -2891,22 +2918,30 @@ const AdminDashboard = () => {
 
                             {/* F6-05: Gastos Operativos excluye egresos de compras para evitar doble conteo con COGS */}
                             <div className="bg-zinc-900 border border-red-500/30 p-5 rounded-2xl shadow-lg">
-                                <p className="text-red-400 text-[10px] uppercase tracking-widest font-bold mb-1">Gastos Operativos</p>
-                                <h3 className="text-2xl font-bold text-red-400">
-                                    ${(
-                                        movementsList.filter(m => m.tipo === 'EGRESO' && !m.compra_id).reduce((sum, m) => sum + Number(m.monto || 0), 0) +
-                                        liquidacionesList.filter(l => l.estado === 'PAGADO').reduce((sum, l) => sum + Number(l.monto_calculado || 0), 0)
-                                    ).toLocaleString()}
-                                </h3>
-                                <span className="text-[10px] text-zinc-400 bg-zinc-950/50 inline-block px-2 py-0.5 rounded mt-2">Liquidaciones + Otros Egresos (excl. Compras)</span>
+                                <p className="text-red-400 text-[10px] uppercase tracking-widest font-bold mb-1">Total Gastos Operativos</p>
+                                {(() => {
+                                    const nominaPagada = liquidacionesList.filter(l => l.estado === 'PAGADO').reduce((sum, l) => sum + Number(l.monto_calculado || 0), 0);
+                                    const gastosRegistrados = gastosList.filter(g => g.estado === 'ACTIVO').reduce((sum, g) => sum + Number(g.monto || 0), 0);
+                                    const otrosEgresos = movementsList.filter(m => m.tipo === 'EGRESO' && !m.compra_id && !m.gasto_id && !m.liquidacion_id).reduce((sum, m) => sum + Number(m.monto || 0), 0);
+                                    return (
+                                        <>
+                                            <h3 className="text-2xl font-bold text-red-400">
+                                                ${(nominaPagada + gastosRegistrados + otrosEgresos).toLocaleString()}
+                                            </h3>
+                                            <span className="text-[10px] text-zinc-400 bg-zinc-950/50 inline-block px-2 py-0.5 rounded mt-2">Nómina + Gastos + Otros Egresos (excl. Compras)</span>
+                                        </>
+                                    );
+                                })()}
                             </div>
 
                             <div className="bg-zinc-900 border border-blue-500/40 p-5 rounded-2xl shadow-lg">
                                 <p className="text-blue-400 text-[10px] uppercase tracking-widest font-bold mb-1">Utilidad Neta Operativa</p>
-                                {/* F6-05: gastos = liquidaciones + egresos-no-compras (compras ya están en COGS) */}
+                                {/* F6-07: gastos = nómina pagada + gastos activos + otros egresos (no compras/gastos/liquidaciones) */}
                                 {(() => {
-                                    const gastosOp = movementsList.filter(m => m.tipo === 'EGRESO' && !m.compra_id).reduce((sum, m) => sum + Number(m.monto || 0), 0) +
-                                        liquidacionesList.filter(l => l.estado === 'PAGADO').reduce((sum, l) => sum + Number(l.monto_calculado || 0), 0);
+                                    const nominaPagada = liquidacionesList.filter(l => l.estado === 'PAGADO').reduce((sum, l) => sum + Number(l.monto_calculado || 0), 0);
+                                    const gastosRegistrados = gastosList.filter(g => g.estado === 'ACTIVO').reduce((sum, g) => sum + Number(g.monto || 0), 0);
+                                    const otrosEgresos = movementsList.filter(m => m.tipo === 'EGRESO' && !m.compra_id && !m.gasto_id && !m.liquidacion_id).reduce((sum, m) => sum + Number(m.monto || 0), 0);
+                                    const gastosOp = nominaPagada + gastosRegistrados + otrosEgresos;
                                     const utilidad = (salesKPIs?.totalVentas || 0) - (cogsTotal || 0) - gastosOp;
                                     return (
                                         <>
@@ -2943,27 +2978,32 @@ const AdminDashboard = () => {
                                     <span className="text-gold">${Math.round((salesKPIs?.totalVentas || 0) - (cogsTotal || 0)).toLocaleString()}</span>
                                 </div>
                                 <div className="flex justify-between items-center py-2.5 border-b border-zinc-800 text-sm">
-                                    <span className="font-semibold text-zinc-300">(-) Egresos y Salidas de Caja</span>
-                                    <span className="font-bold text-red-400">-${movementsList.filter(m => m.tipo === 'EGRESO' && !m.compra_id).reduce((sum, m) => sum + Number(m.monto || 0), 0).toLocaleString()}</span>
-                                </div>
-                                <div className="flex justify-between items-center py-2.5 border-b border-zinc-800 text-sm">
-                                    <span className="font-semibold text-zinc-300">(-) Nomina y Liquidaciones Pagadas</span>
+                                    <span className="font-semibold text-zinc-300">(-) Nómina y Liquidaciones Pagadas</span>
                                     <span className="font-bold text-red-400">-${liquidacionesList.filter(l => l.estado === 'PAGADO').reduce((sum, l) => sum + Number(l.monto_calculado || 0), 0).toLocaleString()}</span>
                                 </div>
-                                <div className="flex justify-between items-center py-4 bg-zinc-950 px-4 rounded-xl text-lg font-bold border border-zinc-800">
-                                    <span className="text-white">(=) RESULTADO OPERATIVO NETO</span>
-                                    <span className={
-                                        ((salesKPIs?.totalVentas || 0) - (cogsTotal || 0) - (movementsList.filter(m => m.tipo === 'EGRESO' && !m.compra_id).reduce((sum, m) => sum + Number(m.monto || 0), 0) + liquidacionesList.filter(l => l.estado === 'PAGADO').reduce((sum, l) => sum + Number(l.monto_calculado || 0), 0))) >= 0
-                                            ? 'text-green-400'
-                                            : 'text-red-400'
-                                    }>
-                                        ${Math.round(
-                                            (salesKPIs?.totalVentas || 0) -
-                                            (cogsTotal || 0) -
-                                            (movementsList.filter(m => m.tipo === 'EGRESO' && !m.compra_id).reduce((sum, m) => sum + Number(m.monto || 0), 0) + liquidacionesList.filter(l => l.estado === 'PAGADO').reduce((sum, l) => sum + Number(l.monto_calculado || 0), 0))
-                                        ).toLocaleString()}
-                                    </span>
+                                <div className="flex justify-between items-center py-2.5 border-b border-zinc-800 text-sm">
+                                    <span className="font-semibold text-zinc-300">(-) Gastos Operativos Registrados</span>
+                                    <span className="font-bold text-red-400">-${gastosList.filter(g => g.estado === 'ACTIVO').reduce((sum, g) => sum + Number(g.monto || 0), 0).toLocaleString()}</span>
                                 </div>
+                                <div className="flex justify-between items-center py-2.5 border-b border-zinc-800 text-sm">
+                                    <span className="font-semibold text-zinc-300">(-) Otros Egresos de Caja</span>
+                                    <span className="font-bold text-red-400">-${movementsList.filter(m => m.tipo === 'EGRESO' && !m.compra_id && !m.gasto_id && !m.liquidacion_id).reduce((sum, m) => sum + Number(m.monto || 0), 0).toLocaleString()}</span>
+                                </div>
+                                {(() => {
+                                    const nominaPagada = liquidacionesList.filter(l => l.estado === 'PAGADO').reduce((sum, l) => sum + Number(l.monto_calculado || 0), 0);
+                                    const gastosRegistrados = gastosList.filter(g => g.estado === 'ACTIVO').reduce((sum, g) => sum + Number(g.monto || 0), 0);
+                                    const otrosEgresos = movementsList.filter(m => m.tipo === 'EGRESO' && !m.compra_id && !m.gasto_id && !m.liquidacion_id).reduce((sum, m) => sum + Number(m.monto || 0), 0);
+                                    const totalGastos = nominaPagada + gastosRegistrados + otrosEgresos;
+                                    const resultado = (salesKPIs?.totalVentas || 0) - (cogsTotal || 0) - totalGastos;
+                                    return (
+                                        <div className="flex justify-between items-center py-4 bg-zinc-950 px-4 rounded-xl text-lg font-bold border border-zinc-800">
+                                            <span className="text-white">(=) RESULTADO OPERATIVO NETO</span>
+                                            <span className={resultado >= 0 ? 'text-green-400' : 'text-red-400'}>
+                                                ${Math.round(resultado).toLocaleString()}
+                                            </span>
+                                        </div>
+                                    );
+                                })()}
                             </div>
                         </div>
                     </div>
@@ -3351,6 +3391,7 @@ const AdminDashboard = () => {
                                                 <th className="p-4 text-right">Monto Calculado</th>
                                                 <th className="p-4 text-center">Estado</th>
                                                 <th className="p-4 text-center">Acción de Pago</th>
+                                                <th className="p-4 text-center">Gestión</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-zinc-800 text-sm">
@@ -3371,7 +3412,11 @@ const AdminDashboard = () => {
                                                         ${Number(liq.monto_calculado).toLocaleString()}
                                                     </td>
                                                     <td className="p-4 text-center">
-                                                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${liq.estado === 'PAGADO' ? 'bg-green-500/10 text-green-400' : 'bg-yellow-500/10 text-yellow-400'}`}>
+                                                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${
+                                                            liq.estado === 'PAGADO' ? 'bg-green-500/10 text-green-400' :
+                                                            liq.estado === 'ANULADO' ? 'bg-red-500/10 text-red-400' :
+                                                            'bg-yellow-500/10 text-yellow-400'
+                                                        }`}>
                                                             {liq.estado}
                                                         </span>
                                                     </td>
@@ -3388,8 +3433,21 @@ const AdminDashboard = () => {
                                                                     🏦 Bancolombia
                                                                 </button>
                                                             </div>
-                                                        ) : (
+                                                        ) : liq.estado === 'PAGADO' ? (
                                                             <span className="text-xs text-zinc-500 italic">Pagado ({liq.cuenta_pago || 'Caja'})</span>
+                                                        ) : (
+                                                            <span className="text-xs text-red-400/60 italic">Anulado</span>
+                                                        )}
+                                                    </td>
+                                                    <td className="p-4 text-center">
+                                                        {liq.estado !== 'ANULADO' && currentUserProfile?.es_socio && (
+                                                            <button
+                                                                onClick={() => { setShowAnularLiqModal(liq); setAnularLiqMotivo(''); }}
+                                                                disabled={actionLoading}
+                                                                className="bg-red-600/80 hover:bg-red-700 text-white text-[10px] font-bold px-2.5 py-1 rounded transition-all"
+                                                            >
+                                                                ✕ Anular
+                                                            </button>
                                                         )}
                                                     </td>
                                                 </tr>
@@ -3424,8 +3482,12 @@ const AdminDashboard = () => {
                                             </div>
                                             {/* Nivel 2 — estado */}
                                             <div>
-                                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${liq.estado === 'PAGADO' ? 'bg-green-500/10 text-green-400' : 'bg-yellow-500/10 text-yellow-400'}`}>
-                                                    {liq.estado === 'PAGADO' ? '✓ Pagado' : '⏳ Pendiente'}
+                                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${
+                                                    liq.estado === 'PAGADO' ? 'bg-green-500/10 text-green-400' :
+                                                    liq.estado === 'ANULADO' ? 'bg-red-500/10 text-red-400' :
+                                                    'bg-yellow-500/10 text-yellow-400'
+                                                }`}>
+                                                    {liq.estado === 'PAGADO' ? '✓ Pagado' : liq.estado === 'ANULADO' ? '✕ Anulado' : '⏳ Pendiente'}
                                                 </span>
                                                 {liq.estado === 'PAGADO' && liq.cuenta_pago && (
                                                     <span className="text-[10px] text-zinc-600 ml-2">({liq.cuenta_pago})</span>
@@ -3456,6 +3518,16 @@ const AdminDashboard = () => {
                                                         🏦 BC
                                                     </button>
                                                 </div>
+                                            )}
+                                            {/* Botón anular (solo socios, solo estados no-anulados) */}
+                                            {liq.estado !== 'ANULADO' && currentUserProfile?.es_socio && (
+                                                <button
+                                                    onClick={() => { setShowAnularLiqModal(liq); setAnularLiqMotivo(''); }}
+                                                    disabled={actionLoading}
+                                                    className="w-full min-h-[44px] bg-red-600/80 hover:bg-red-700 active:scale-95 text-white text-xs font-bold rounded-xl transition-all disabled:opacity-50 mt-1"
+                                                >
+                                                    ✕ Anular Liquidación
+                                                </button>
                                             )}
                                         </div>
                                     ))}
@@ -5494,6 +5566,59 @@ const AdminDashboard = () => {
                                 className="w-full bg-red-600 hover:bg-red-700 text-white py-3 rounded-lg font-bold transition-all uppercase tracking-wider text-xs shadow-lg disabled:opacity-50"
                             >
                                 {actionLoading ? 'Procesando...' : '⚠️ Confirmar Anulación'}
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Modal Anular Liquidación */}
+                {showAnularLiqModal && (
+                    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[999]">
+                        <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-2xl relative space-y-4 font-sans">
+                            <div className="flex justify-between items-center border-b border-zinc-800 pb-3">
+                                <h3 className="text-base font-bold font-serif text-red-400 flex items-center gap-2">
+                                    ⚠️ Confirmar Anulación de Liquidación
+                                </h3>
+                                <button onClick={() => setShowAnularLiqModal(null)} className="text-zinc-500 hover:text-white">✕</button>
+                            </div>
+
+                            <div className="space-y-3 text-xs">
+                                <p className="text-zinc-400">
+                                    Trabajador: <span className="font-bold text-white">{showAnularLiqModal.perfiles_trabajadores?.nombre || 'Desconocido'}</span>
+                                </p>
+                                <p className="text-zinc-400">
+                                    Monto: <span className="font-bold text-white">${Number(showAnularLiqModal.monto_calculado || 0).toLocaleString()}</span>
+                                    {' · '}Estado: <span className={`font-bold ${showAnularLiqModal.estado === 'PAGADO' ? 'text-green-400' : 'text-yellow-400'}`}>{showAnularLiqModal.estado}</span>
+                                </p>
+                                {showAnularLiqModal.estado === 'PAGADO' && (
+                                    <p className="text-amber-400 text-[10px] bg-amber-500/10 px-2 py-1 rounded">
+                                        ⚠️ Esta liquidación ya fue pagada. Se preservará el egreso original y se creará un INGRESO compensatorio automático en caja.
+                                    </p>
+                                )}
+                                {showAnularLiqModal.estado === 'PENDIENTE' && (
+                                    <p className="text-zinc-500 text-[10px]">
+                                        Esta liquidación aún no fue pagada. No se generará ningún movimiento financiero.
+                                    </p>
+                                )}
+
+                                <div>
+                                    <label className="text-[10px] font-bold uppercase text-zinc-400 block mb-1">Motivo de Anulación</label>
+                                    <input
+                                        type="text"
+                                        placeholder="Ej. Error en monto, cambio de modalidad..."
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-white outline-none focus:border-fire text-sm"
+                                        value={anularLiqMotivo}
+                                        onChange={(e) => setAnularLiqMotivo(e.target.value)}
+                                    />
+                                </div>
+                            </div>
+
+                            <button
+                                onClick={handleAnularLiquidacion}
+                                disabled={actionLoading}
+                                className="w-full bg-red-600 hover:bg-red-700 text-white py-3 rounded-lg font-bold transition-all uppercase tracking-wider text-xs shadow-lg disabled:opacity-50"
+                            >
+                                {actionLoading ? 'Procesando...' : '⚠️ Confirmar Anulación de Liquidación'}
                             </button>
                         </div>
                     </div>
