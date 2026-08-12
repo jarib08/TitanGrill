@@ -2922,7 +2922,7 @@ const AdminDashboard = () => {
                                 <p className="text-red-400 text-[10px] uppercase tracking-widest font-bold mb-1">Total Gastos Operativos</p>
                                 {(() => {
                                     const nominaPagada = liquidacionesList.filter(l => l.estado === 'PAGADO').reduce((sum, l) => sum + Number(l.monto_calculado || 0), 0);
-                                    const gastosRegistrados = gastosList.filter(g => g.estado === 'ACTIVO').reduce((sum, g) => sum + Number(g.monto || 0), 0);
+                                    const gastosRegistrados = gastosList.filter(g => g.estado !== 'ANULADO').reduce((sum, g) => sum + Number(g.monto || 0), 0);
                                     const otrosEgresos = movementsList.filter(m => m.tipo === 'EGRESO' && !m.compra_id && !m.gasto_id && !m.liquidacion_id).reduce((sum, m) => sum + Number(m.monto || 0), 0);
                                     return (
                                         <>
@@ -2940,7 +2940,7 @@ const AdminDashboard = () => {
                                 {/* F6-07: gastos = nómina pagada + gastos activos + otros egresos (no compras/gastos/liquidaciones) */}
                                 {(() => {
                                     const nominaPagada = liquidacionesList.filter(l => l.estado === 'PAGADO').reduce((sum, l) => sum + Number(l.monto_calculado || 0), 0);
-                                    const gastosRegistrados = gastosList.filter(g => g.estado === 'ACTIVO').reduce((sum, g) => sum + Number(g.monto || 0), 0);
+                                    const gastosRegistrados = gastosList.filter(g => g.estado !== 'ANULADO').reduce((sum, g) => sum + Number(g.monto || 0), 0);
                                     const otrosEgresos = movementsList.filter(m => m.tipo === 'EGRESO' && !m.compra_id && !m.gasto_id && !m.liquidacion_id).reduce((sum, m) => sum + Number(m.monto || 0), 0);
                                     const gastosOp = nominaPagada + gastosRegistrados + otrosEgresos;
                                     const utilidad = (salesKPIs?.totalVentas || 0) - (cogsTotal || 0) - gastosOp;
@@ -2984,7 +2984,7 @@ const AdminDashboard = () => {
                                 </div>
                                 <div className="flex justify-between items-center py-2.5 border-b border-zinc-800 text-sm">
                                     <span className="font-semibold text-zinc-300">(-) Gastos Operativos Registrados</span>
-                                    <span className="font-bold text-red-400">-${gastosList.filter(g => g.estado === 'ACTIVO').reduce((sum, g) => sum + Number(g.monto || 0), 0).toLocaleString()}</span>
+                                    <span className="font-bold text-red-400">-${gastosList.filter(g => g.estado !== 'ANULADO').reduce((sum, g) => sum + Number(g.monto || 0), 0).toLocaleString()}</span>
                                 </div>
                                 <div className="flex justify-between items-center py-2.5 border-b border-zinc-800 text-sm">
                                     <span className="font-semibold text-zinc-300">(-) Otros Egresos de Caja</span>
@@ -2992,7 +2992,7 @@ const AdminDashboard = () => {
                                 </div>
                                 {(() => {
                                     const nominaPagada = liquidacionesList.filter(l => l.estado === 'PAGADO').reduce((sum, l) => sum + Number(l.monto_calculado || 0), 0);
-                                    const gastosRegistrados = gastosList.filter(g => g.estado === 'ACTIVO').reduce((sum, g) => sum + Number(g.monto || 0), 0);
+                                    const gastosRegistrados = gastosList.filter(g => g.estado !== 'ANULADO').reduce((sum, g) => sum + Number(g.monto || 0), 0);
                                     const otrosEgresos = movementsList.filter(m => m.tipo === 'EGRESO' && !m.compra_id && !m.gasto_id && !m.liquidacion_id).reduce((sum, m) => sum + Number(m.monto || 0), 0);
                                     const totalGastos = nominaPagada + gastosRegistrados + otrosEgresos;
                                     const resultado = (salesKPIs?.totalVentas || 0) - (cogsTotal || 0) - totalGastos;
