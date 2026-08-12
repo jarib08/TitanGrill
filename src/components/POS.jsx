@@ -141,6 +141,7 @@ const POS = () => {
         };
         getWorkerProfile();
         fetchProducts();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     // Observer to hide mobile floating cart when #detalle-pedido is in viewport

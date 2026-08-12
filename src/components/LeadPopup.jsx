@@ -59,7 +59,7 @@ const LeadPopup = () => {
         };
         window.addEventListener('keydown', handleEsc);
         return () => window.removeEventListener('keydown', handleEsc);
-    }, [isOpen, showCard]);
+    }, [isOpen, showCard, handleClose]);
 
     // Detect and validate referral code from URL
     useEffect(() => {
