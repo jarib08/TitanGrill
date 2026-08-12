@@ -28,6 +28,7 @@ const POS = () => {
     const [searchQuery, setSearchQuery] = useState('');
     const [clients, setClients] = useState([]);
     const [selectedClient, setSelectedClient] = useState(null);
+    const [extraClients, setExtraClients] = useState([]); // Multi-stamp: additional clients for this sale
     const [isSearchingClient, setIsSearchingClient] = useState(false);
 
     // Mobile floating cart visibility state
@@ -45,8 +46,12 @@ const POS = () => {
     const [sessionLoading, setSessionLoading] = useState(true);
     const [openCashAmount, setOpenCashAmount] = useState(50000);
     const [closeCashCounted, setCloseCashCounted] = useState(0);
+    const [closeNequiCounted, setCloseNequiCounted] = useState(0);
+    const [closeBancoCounted, setCloseBancoCounted] = useState(0);
     const [closeObservations, setCloseObservations] = useState('');
     const [expectedCashAtClose, setExpectedCashAtClose] = useState(0);
+    const [expectedNequiAtClose, setExpectedNequiAtClose] = useState(0);
+    const [expectedBancoAtClose, setExpectedBancoAtClose] = useState(0);
 
     // Modal view states
     const [showCloseModal, setShowCloseModal] = useState(false);
@@ -98,27 +103,21 @@ const POS = () => {
 
     const fetchExpectedCash = async (sessionId, _openingAmount) => {
         try {
-            // Sum revenues in EFECTIVO
-            const { data: revenues } = await supabase
+            // Fetch ALL movements for this session
+            const { data: allMovs } = await supabase
                 .from('movimientos_caja')
-                .select('monto')
-                .eq('sesion_id', sessionId)
-                .eq('tipo', 'INGRESO')
-                .eq('metodo_pago', 'EFECTIVO');
+                .select('monto, tipo, metodo_pago')
+                .eq('sesion_id', sessionId);
 
-            // Sum expenses in EFECTIVO
-            const { data: expenses } = await supabase
-                .from('movimientos_caja')
-                .select('monto')
-                .eq('sesion_id', sessionId)
-                .eq('tipo', 'EGRESO')
-                .eq('metodo_pago', 'EFECTIVO');
+            const calcExpected = (method) => {
+                const ing = (allMovs || []).filter(m => m.tipo === 'INGRESO' && m.metodo_pago === method).reduce((s, m) => s + Number(m.monto), 0);
+                const egr = (allMovs || []).filter(m => m.tipo === 'EGRESO' && m.metodo_pago === method).reduce((s, m) => s + Number(m.monto), 0);
+                return ing - egr;
+            };
 
-            const sumRevenues = revenues?.reduce((sum, item) => sum + Number(item.monto), 0) || 0;
-            const sumExpenses = expenses?.reduce((sum, item) => sum + Number(item.monto), 0) || 0;
-
-            // Notice: sumRevenues already contains opening amount since we inserted it during abrir_caja
-            setExpectedCashAtClose(sumRevenues - sumExpenses);
+            setExpectedCashAtClose(calcExpected('EFECTIVO'));
+            setExpectedNequiAtClose(calcExpected('NEQUI'));
+            setExpectedBancoAtClose(calcExpected('BANCOLOMBIA'));
         } catch (err) {
             console.error(err);
         }
@@ -315,8 +314,18 @@ const POS = () => {
             const { data: client, error } = await query.maybeSingle();
 
             if (!error && client) {
-                setSelectedClient(client);
-                setSuccessMessage(`🔥 ¡Cliente asociado con éxito: ${client.nombre}!`);
+                // Multi-stamp: if primary client exists, add to extras
+                if (selectedClient) {
+                    if (client.id === selectedClient.id || extraClients.some(ec => ec.id === client.id)) {
+                        setSuccessMessage(`⚠️ ${client.nombre} ya tiene sello asignado en esta venta.`);
+                    } else {
+                        setExtraClients(prev => [...prev, client]);
+                        setSuccessMessage(`🔥 Sello adicional para: ${client.nombre}`);
+                    }
+                } else {
+                    setSelectedClient(client);
+                    setSuccessMessage(`🔥 ¡Cliente asociado con éxito: ${client.nombre}!`);
+                }
             } else {
                 setErrorMessage(`Cliente no encontrado para el código: "${searchId}". Puedes crearlo a continuación.`);
                 setNewClientForm({ nombre: '', celular: /^\d+$/.test(searchId) ? searchId : '', email: '' });
@@ -402,7 +411,9 @@ const POS = () => {
         try {
             const { data, error } = await supabase.rpc('cerrar_caja', {
                 p_monto_cierre_contado: Number(closeCashCounted),
-                p_observaciones: closeObservations
+                p_observaciones: closeObservations,
+                p_contado_nequi: Number(closeNequiCounted),
+                p_contado_bancolombia: Number(closeBancoCounted)
             });
 
             if (error) throw new Error(error.message);
@@ -412,8 +423,11 @@ const POS = () => {
             setActiveSession(null);
             setCloseObservations('');
             setCloseCashCounted(0);
-            
-            alert(`Caja cerrada. Diferencia: $${data.diferencia.toLocaleString()}`);
+            setCloseNequiCounted(0);
+            setCloseBancoCounted(0);
+
+            const difTotal = data.total?.diferencia ?? data.diferencia ?? 0;
+            alert(`Caja cerrada. Diferencia total: $${Number(difTotal).toLocaleString()}`);
             
             if (worker) {
                 await fetchSession(worker.id);
@@ -456,20 +470,22 @@ const POS = () => {
                 p_detalles: { items: cart, subtotal, discount },
                 p_monto_efectivo: paymentMethod === 'MIXTO' ? Number(cashAmount) : 0,
                 p_monto_nequi: paymentMethod === 'MIXTO' ? Number(nequiAmount) : 0,
-                p_monto_bancolombia: paymentMethod === 'MIXTO' ? Number(bancolombiaAmount) : 0
+                p_monto_bancolombia: paymentMethod === 'MIXTO' ? Number(bancolombiaAmount) : 0,
+                p_clientes_extra: extraClients.map(c => c.id)
             });
 
             if (error) throw new Error(error.message);
             if (data && !data.success) throw new Error(data.message);
 
             setSuccessMessage(
-                `Venta registrada con éxito. ${data.earned_stamps > 0 ? '🔥 ¡Sello de fidelización asignado al cliente!' : ''}`
+                `Venta registrada con éxito. ${data.earned_stamps > 0 ? `🔥 ¡${data.earned_stamps} sello${data.earned_stamps > 1 ? 's' : ''} de fidelización asignado${data.earned_stamps > 1 ? 's' : ''}!` : ''}`
             );
 
             // Reset UI
             setCart([]);
             setDiscount(0);
             setSelectedClient(null);
+            setExtraClients([]);
             setSearchQuery('');
             setClients([]);
             setPaymentMethod('EFECTIVO');
@@ -833,6 +849,26 @@ const POS = () => {
                                             </button>
                                         </div>
                                     )}
+
+                                    {/* Multi-stamp: extra clients for this sale */}
+                                    {extraClients.length > 0 && (
+                                        <div className="space-y-1 mt-2">
+                                            <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Sellos adicionales</p>
+                                            {extraClients.map(ec => (
+                                                <div key={ec.id} className="flex justify-between items-center bg-zinc-800/50 border border-zinc-700 p-2 rounded-lg text-xs">
+                                                    <span className="text-zinc-300">🔥 {ec.nombre}</span>
+                                                    <button onClick={() => setExtraClients(prev => prev.filter(x => x.id !== ec.id))} className="text-red-400 hover:text-red-300 text-[10px] font-bold">✕</button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowQrModal(true)}
+                                        className="w-full mt-1 text-[10px] font-bold uppercase tracking-wider text-zinc-500 hover:text-fire border border-dashed border-zinc-700 hover:border-fire/40 rounded-lg py-2 transition-colors"
+                                    >
+                                        + Agregar sello a otro cliente
+                                    </button>
                                 </div>
                             ) : (
                                 <div className="relative">
@@ -1045,51 +1081,81 @@ const POS = () => {
                 </div>
             )}
 
-            {/* Modal: Close Drawer / Arqueo */}
+            {/* Modal: Close Drawer / Arqueo — Multi-method */}
             {showCloseModal && (
-                <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-6 z-[999]">
-                    <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-2xl relative space-y-5">
+                <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[999] overflow-y-auto">
+                    <div className="w-full max-w-lg bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-2xl relative space-y-5 my-4">
                         <div className="flex justify-between items-center border-b border-zinc-800 pb-3">
                             <h3 className="text-lg font-bold font-serif text-white">Cierre de Caja y Arqueo</h3>
                             <button onClick={() => setShowCloseModal(false)} className="text-zinc-500 hover:text-white">✕</button>
                         </div>
 
                         <div className="space-y-4">
-                            <div className="p-4 bg-zinc-950 rounded-lg border border-zinc-850 flex justify-between items-center text-xs">
-                                <span className="text-zinc-400">Efectivo Esperado</span>
-                                <span className="font-bold text-green-400 text-sm">${expectedCashAtClose.toLocaleString()}</span>
+                            {/* EFECTIVO */}
+                            <div className="bg-zinc-950 rounded-xl p-4 border border-zinc-800 space-y-3">
+                                <p className="text-[10px] font-bold uppercase tracking-widest text-green-400">💵 Efectivo</p>
+                                <div className="flex justify-between items-center text-xs">
+                                    <span className="text-zinc-400">Esperado</span>
+                                    <span className="font-bold text-green-400">${expectedCashAtClose.toLocaleString()}</span>
+                                </div>
+                                <input type="number" className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-white focus:border-fire outline-none text-center font-bold text-sm" placeholder="Contado" value={closeCashCounted} onChange={(e) => setCloseCashCounted(Number(e.target.value))} />
+                                <div className="flex justify-between items-center text-xs">
+                                    <span className="text-zinc-500">Diferencia</span>
+                                    <span className={`font-bold ${closeCashCounted - expectedCashAtClose === 0 ? 'text-green-500' : 'text-fire'}`}>${(closeCashCounted - expectedCashAtClose).toLocaleString()}</span>
+                                </div>
                             </div>
 
-                            <div>
-                                <label className="text-xs font-bold uppercase tracking-wider text-zinc-400 block mb-2">Efectivo Físico Contado ($)</label>
-                                <input
-                                    type="number"
-                                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-white focus:border-fire outline-none text-center font-bold text-sm"
-                                    value={closeCashCounted}
-                                    onChange={(e) => setCloseCashCounted(Number(e.target.value))}
-                                />
+                            {/* NEQUI */}
+                            <div className="bg-zinc-950 rounded-xl p-4 border border-zinc-800 space-y-3">
+                                <p className="text-[10px] font-bold uppercase tracking-widest text-purple-400">📱 Nequi</p>
+                                <div className="flex justify-between items-center text-xs">
+                                    <span className="text-zinc-400">Esperado</span>
+                                    <span className="font-bold text-purple-400">${expectedNequiAtClose.toLocaleString()}</span>
+                                </div>
+                                <input type="number" className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-white focus:border-fire outline-none text-center font-bold text-sm" placeholder="Contado" value={closeNequiCounted} onChange={(e) => setCloseNequiCounted(Number(e.target.value))} />
+                                <div className="flex justify-between items-center text-xs">
+                                    <span className="text-zinc-500">Diferencia</span>
+                                    <span className={`font-bold ${closeNequiCounted - expectedNequiAtClose === 0 ? 'text-green-500' : 'text-fire'}`}>${(closeNequiCounted - expectedNequiAtClose).toLocaleString()}</span>
+                                </div>
                             </div>
 
-                            <div className="p-4 bg-zinc-950 rounded-lg border border-zinc-850 flex justify-between items-center text-xs">
-                                <span className="text-zinc-400">Diferencia (Descuadre)</span>
-                                <span className={`font-bold text-sm ${
-                                    closeCashCounted - expectedCashAtClose === 0 
-                                        ? 'text-green-500' 
-                                        : 'text-fire'
-                                }`}>
-                                    ${(closeCashCounted - expectedCashAtClose).toLocaleString()}
-                                </span>
+                            {/* BANCOLOMBIA */}
+                            <div className="bg-zinc-950 rounded-xl p-4 border border-zinc-800 space-y-3">
+                                <p className="text-[10px] font-bold uppercase tracking-widest text-yellow-400">🏦 Bancolombia</p>
+                                <div className="flex justify-between items-center text-xs">
+                                    <span className="text-zinc-400">Esperado</span>
+                                    <span className="font-bold text-yellow-400">${expectedBancoAtClose.toLocaleString()}</span>
+                                </div>
+                                <input type="number" className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-white focus:border-fire outline-none text-center font-bold text-sm" placeholder="Contado" value={closeBancoCounted} onChange={(e) => setCloseBancoCounted(Number(e.target.value))} />
+                                <div className="flex justify-between items-center text-xs">
+                                    <span className="text-zinc-500">Diferencia</span>
+                                    <span className={`font-bold ${closeBancoCounted - expectedBancoAtClose === 0 ? 'text-green-500' : 'text-fire'}`}>${(closeBancoCounted - expectedBancoAtClose).toLocaleString()}</span>
+                                </div>
+                            </div>
+
+                            {/* TOTAL */}
+                            <div className="bg-zinc-950 rounded-xl p-4 border border-fire/30 space-y-2">
+                                <p className="text-[10px] font-bold uppercase tracking-widest text-fire">Total Consolidado</p>
+                                <div className="flex justify-between items-center text-xs">
+                                    <span className="text-zinc-400">Esperado Total</span>
+                                    <span className="font-bold text-white">${(expectedCashAtClose + expectedNequiAtClose + expectedBancoAtClose).toLocaleString()}</span>
+                                </div>
+                                <div className="flex justify-between items-center text-xs">
+                                    <span className="text-zinc-400">Contado Total</span>
+                                    <span className="font-bold text-white">${(closeCashCounted + closeNequiCounted + closeBancoCounted).toLocaleString()}</span>
+                                </div>
+                                <div className="flex justify-between items-center text-sm font-bold">
+                                    <span className="text-zinc-300">Diferencia Total</span>
+                                    {(() => {
+                                        const diff = (closeCashCounted + closeNequiCounted + closeBancoCounted) - (expectedCashAtClose + expectedNequiAtClose + expectedBancoAtClose);
+                                        return <span className={diff === 0 ? 'text-green-500' : diff > 0 ? 'text-yellow-400' : 'text-red-400'}>${diff.toLocaleString()} {diff > 0 ? '(SOBRANTE)' : diff < 0 ? '(FALTANTE)' : '(CUADRADO)'}</span>;
+                                    })()}
+                                </div>
                             </div>
 
                             <div>
                                 <label className="text-xs font-bold uppercase tracking-wider text-zinc-400 block mb-2">Observaciones / Justificación</label>
-                                <textarea
-                                    rows="3"
-                                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-xs text-white focus:border-fire outline-none resize-none"
-                                    placeholder="Detallar motivos de descuadre o incidencias en el turno..."
-                                    value={closeObservations}
-                                    onChange={(e) => setCloseObservations(e.target.value)}
-                                />
+                                <textarea rows="3" className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-xs text-white focus:border-fire outline-none resize-none" placeholder="Detallar motivos de descuadre o incidencias en el turno..." value={closeObservations} onChange={(e) => setCloseObservations(e.target.value)} />
                             </div>
                         </div>
 
@@ -1099,11 +1165,7 @@ const POS = () => {
                             </div>
                         )}
 
-                        <button
-                            onClick={handleCloseSession}
-                            disabled={loading}
-                            className="w-full bg-fire hover:bg-orange-700 text-white py-3 rounded-lg font-bold transition-all shadow-lg active:scale-[0.99] uppercase text-xs tracking-wider"
-                        >
+                        <button onClick={handleCloseSession} disabled={loading} className="w-full bg-fire hover:bg-orange-700 text-white py-3 rounded-lg font-bold transition-all shadow-lg active:scale-[0.99] uppercase text-xs tracking-wider">
                             {loading ? 'Confirmando Cierre...' : 'Confirmar Cierre y Arqueo'}
                         </button>
                     </div>

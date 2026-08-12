@@ -164,6 +164,17 @@ const AdminDashboard = () => {
     const [categoriaForm, setCategoriaForm] = useState({ nombre: '', activo: true });
     const [showAnularGastoModal, setShowAnularGastoModal] = useState(null); // Gasto object or null
     const [anularGastoMotivo, setAnularGastoMotivo] = useState('');
+
+    // Sale cancellation workflow states
+    const [anulacionesList, setAnulacionesList] = useState([]);
+    const [showSolicitarAnulacionModal, setShowSolicitarAnulacionModal] = useState(null); // venta object or null
+    const [anulacionMotivo, setAnulacionMotivo] = useState('');
+
+    // Costos Fijos/Variables states
+    const [costosList, setCostosList] = useState([]);
+    const [showCostoModal, setShowCostoModal] = useState(false);
+    const [costoForm, setCostoForm] = useState({ nombre: '', descripcion: '', tipo_costo: 'FIJO', categoria: 'OTROS', monto: '', periodicidad: 'MENSUAL' });
+    const [editingCosto, setEditingCosto] = useState(null);
     // ─────────────────────────────────────────────────────────────────────────
 
     const fetchDashboardData = async () => {
@@ -288,6 +299,20 @@ const AdminDashboard = () => {
             }, 0) || 0;
             setCogsTotal(totalCogs);
 
+            // 12. Fetch anulaciones de venta
+            const { data: anulaciones } = await supabase
+                .from('solicitudes_anulacion_venta')
+                .select('*, ventas(total, fecha, metodo_pago), solicitante:perfiles_trabajadores!solicitudes_anulacion_venta_solicitante_id_fkey(nombre), aprobador1:perfiles_trabajadores!solicitudes_anulacion_venta_aprobador_1_id_fkey(nombre), aprobador2:perfiles_trabajadores!solicitudes_anulacion_venta_aprobador_2_id_fkey(nombre)')
+                .order('created_at', { ascending: false });
+            setAnulacionesList(anulaciones || []);
+
+            // 13. Fetch costos configuracion
+            const { data: costos } = await supabase
+                .from('costos_configuracion')
+                .select('*')
+                .order('tipo_costo', { ascending: true });
+            setCostosList(costos || []);
+
         } catch (error) {
             console.error("Dashboard Error:", error);
             setFetchError(error?.message || 'No se pudo conectar con el servidor.');
@@ -306,7 +331,7 @@ const AdminDashboard = () => {
             const to = from + PAGE_SIZE - 1;
             const { data, count, error } = await supabase
                 .from('ventas')
-                .select('id, fecha, total, metodo_pago, perfiles_trabajadores(nombre), clientes(nombre)', { count: 'exact' })
+                .select('id, fecha, total, metodo_pago, estado, perfiles_trabajadores(nombre), clientes(nombre)', { count: 'exact' })
                 .order('fecha', { ascending: false })
                 .range(from, to);
             if (error) throw error;
@@ -663,6 +688,7 @@ const AdminDashboard = () => {
             const results = await Promise.allSettled([
                 supabase.from('ventas')
                     .select('*, perfiles_trabajadores(nombre), clientes(nombre)')
+                    .neq('estado', 'ANULADA')
                     .gte('fecha', start)
                     .lte('fecha', end)
                     .order('fecha', { ascending: true }),
@@ -1557,6 +1583,128 @@ const AdminDashboard = () => {
         } catch (err) {
             console.error(err);
             alert('Error al crear categoría: ' + err.message);
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
+    // ── Sale Cancellation Handlers ──────────────────────────────────────────
+    const handleSolicitarAnulacion = async () => {
+        if (!showSolicitarAnulacionModal || !anulacionMotivo.trim()) return;
+        setActionLoading(true);
+        try {
+            // Socios/Admins anulate directly; workers create a solicitud
+            const rpcName = currentUserProfile?.es_socio ? 'anular_venta_directa' : 'solicitar_anulacion_venta';
+            const { data, error } = await supabase.rpc(rpcName, {
+                p_venta_id: showSolicitarAnulacionModal.id,
+                p_motivo: anulacionMotivo.trim()
+            });
+            if (error) throw error;
+            if (data && !data.success) throw new Error(data.message);
+            alert(data.message);
+            setShowSolicitarAnulacionModal(null);
+            setAnulacionMotivo('');
+            await fetchDashboardData();
+            // Refresh ventas if on ventas tab
+            if (activeTab === 'ventas') await fetchVentas(ventasPage);
+        } catch (err) {
+            alert('Error: ' + err.message);
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
+    const handleAprobarAnulacion = async (solicitudId) => {
+        if (!confirm('¿Confirmar aprobación de esta solicitud de anulación?')) return;
+        setActionLoading(true);
+        try {
+            const { data, error } = await supabase.rpc('aprobar_anulacion_venta', { p_solicitud_id: solicitudId });
+            if (error) throw error;
+            if (data && !data.success) throw new Error(data.message);
+            alert(data.message);
+            await fetchDashboardData();
+        } catch (err) {
+            alert('Error: ' + err.message);
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
+    const handleEjecutarAnulacion = async (solicitudId) => {
+        if (!confirm('⚠️ ESTA ACCIÓN ANULARÁ LA VENTA Y REVERTIRÁ CAJA, INVENTARIO Y FIDELIZACIÓN. ¿Confirmar?')) return;
+        setActionLoading(true);
+        try {
+            const { data, error } = await supabase.rpc('ejecutar_anulacion_venta', { p_solicitud_id: solicitudId });
+            if (error) throw error;
+            if (data && !data.success) throw new Error(data.message);
+            alert(data.message);
+            await fetchDashboardData();
+        } catch (err) {
+            alert('Error: ' + err.message);
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
+    const handleRechazarAnulacion = async (solicitudId) => {
+        if (!confirm('¿Rechazar esta solicitud de anulación?')) return;
+        setActionLoading(true);
+        try {
+            const { data, error } = await supabase.rpc('rechazar_anulacion_venta', { p_solicitud_id: solicitudId });
+            if (error) throw error;
+            if (data && !data.success) throw new Error(data.message);
+            alert(data.message);
+            await fetchDashboardData();
+        } catch (err) {
+            alert('Error: ' + err.message);
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
+    // ── Cost Configuration Handlers ─────────────────────────────────────────
+    const handleSaveCosto = async () => {
+        if (!costoForm.nombre.trim() || !costoForm.monto) return;
+        setActionLoading(true);
+        try {
+            const payload = {
+                nombre: costoForm.nombre.trim(),
+                descripcion: costoForm.descripcion.trim(),
+                tipo_costo: costoForm.tipo_costo,
+                categoria: costoForm.categoria,
+                monto: Number(costoForm.monto),
+                periodicidad: costoForm.periodicidad,
+                creado_por: currentUserProfile?.id || null
+            };
+            if (editingCosto) {
+                const { error } = await supabase.from('costos_configuracion').update({ ...payload, updated_at: new Date().toISOString() }).eq('id', editingCosto);
+                if (error) throw error;
+            } else {
+                const { error } = await supabase.from('costos_configuracion').insert([payload]);
+                if (error) throw error;
+            }
+            alert(editingCosto ? 'Costo actualizado.' : 'Costo creado.');
+            setShowCostoModal(false);
+            setCostoForm({ nombre: '', descripcion: '', tipo_costo: 'FIJO', categoria: 'OTROS', monto: '', periodicidad: 'MENSUAL' });
+            setEditingCosto(null);
+            await fetchDashboardData();
+        } catch (err) {
+            alert('Error: ' + err.message);
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
+    const handleToggleCosto = async (costo) => {
+        setActionLoading(true);
+        try {
+            const { error } = await supabase.from('costos_configuracion')
+                .update({ activo: !costo.activo, updated_at: new Date().toISOString() })
+                .eq('id', costo.id);
+            if (error) throw error;
+            await fetchDashboardData();
+        } catch (err) {
+            alert('Error: ' + err.message);
         } finally {
             setActionLoading(false);
         }
@@ -2644,7 +2792,9 @@ const AdminDashboard = () => {
                                                 <th className="p-4">Cliente</th>
                                                 <th className="p-4">Registrado por</th>
                                                 <th className="p-4">Pago</th>
+                                                <th className="p-4">Estado</th>
                                                 <th className="p-4 text-right">Total</th>
+                                                <th className="p-4">Acciones</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-zinc-800 text-sm">
@@ -2666,6 +2816,14 @@ const AdminDashboard = () => {
                                                     </td>
                                                     <td className="p-4 text-right font-bold text-zinc-100">
                                                         ${Number(sale.total).toLocaleString()}
+                                                    </td>
+                                                    <td className="p-4">
+                                                        <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${sale.estado === 'COMPLETADA' ? 'bg-green-500/10 text-green-400' : sale.estado === 'ANULADA' ? 'bg-red-500/10 text-red-400' : 'bg-zinc-700 text-zinc-300'}`}>{sale.estado || 'COMPLETADA'}</span>
+                                                    </td>
+                                                    <td className="p-4">
+                                                        {sale.estado === 'COMPLETADA' && (
+                                                            <button onClick={() => setShowSolicitarAnulacionModal(sale)} className="text-[10px] font-bold uppercase bg-red-500/10 text-red-400 hover:bg-red-500/20 px-2 py-1 rounded transition-colors">{currentUserProfile?.es_socio ? 'Anular' : 'Solicitar Anulaci\u00f3n'}</button>
+                                                        )}
                                                     </td>
                                                 </tr>
                                             ))}
@@ -2717,6 +2875,50 @@ const AdminDashboard = () => {
                                 />
                             )}
                         </div>
+
+                        {/* Solicitudes de Anulación Panel */}
+                        {anulacionesList.length > 0 && (
+                            <div className="bg-zinc-900 border border-zinc-800/60 rounded-2xl overflow-hidden">
+                                <div className="p-4 border-b border-zinc-800 bg-zinc-950/40">
+                                    <h3 className="text-sm font-bold uppercase tracking-wider text-red-400">🚨 Solicitudes de Anulación de Venta</h3>
+                                </div>
+                                <div className="divide-y divide-zinc-800">
+                                    {anulacionesList.map(sol => (
+                                        <div key={sol.id} className="p-4 space-y-2">
+                                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                                                <div className="space-y-1">
+                                                    <p className="text-xs text-zinc-400">Venta: ${Number(sol.ventas?.total || 0).toLocaleString()} — {sol.ventas?.fecha ? new Date(sol.ventas.fecha).toLocaleString('es-ES') : ''}</p>
+                                                    <p className="text-xs text-zinc-300"><strong>Motivo:</strong> {sol.motivo}</p>
+                                                    <p className="text-[10px] text-zinc-500">Solicitó: {sol.solicitante?.nombre || 'N/A'} · {new Date(sol.created_at).toLocaleString('es-ES')}</p>
+                                                    {sol.aprobador1?.nombre && <p className="text-[10px] text-green-400">✓ Aprobación 1: {sol.aprobador1.nombre}</p>}
+                                                    {sol.aprobador2?.nombre && <p className="text-[10px] text-green-400">✓ Aprobación 2: {sol.aprobador2.nombre}</p>}
+                                                </div>
+                                                <div className="flex items-center gap-2 flex-wrap">
+                                                    <span className={`text-[10px] font-bold uppercase px-2 py-1 rounded ${
+                                                        sol.estado === 'PENDIENTE' ? 'bg-yellow-500/10 text-yellow-400' :
+                                                        sol.estado === 'APROBACION_1' ? 'bg-blue-500/10 text-blue-400' :
+                                                        sol.estado === 'APROBACION_2' ? 'bg-purple-500/10 text-purple-400' :
+                                                        sol.estado === 'EJECUTADA' ? 'bg-green-500/10 text-green-400' :
+                                                        sol.estado === 'RECHAZADA' ? 'bg-red-500/10 text-red-400' : 'bg-zinc-700 text-zinc-300'
+                                                    }`}>{sol.estado}</span>
+                                                    {currentUserProfile?.es_socio && sol.estado !== 'EJECUTADA' && sol.estado !== 'RECHAZADA' && (
+                                                        <>
+                                                            {(sol.estado === 'PENDIENTE' || sol.estado === 'APROBACION_1') && (
+                                                                <button onClick={() => handleAprobarAnulacion(sol.id)} disabled={actionLoading} className="text-[10px] font-bold bg-green-500/10 text-green-400 hover:bg-green-500/20 px-3 py-1 rounded transition-colors">Aprobar y Ejecutar</button>
+                                                            )}
+                                                            {sol.estado === 'APROBACION_2' && (
+                                                                <button onClick={() => handleEjecutarAnulacion(sol.id)} disabled={actionLoading} className="text-[10px] font-bold bg-fire/20 text-fire hover:bg-fire/30 px-3 py-1 rounded transition-colors">Ejecutar Anulación</button>
+                                                            )}
+                                                            <button onClick={() => handleRechazarAnulacion(sol.id)} disabled={actionLoading} className="text-[10px] font-bold bg-red-500/10 text-red-400 hover:bg-red-500/20 px-3 py-1 rounded transition-colors">Rechazar</button>
+                                                        </>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
                     </div>
                 )}
 
@@ -3002,6 +3204,110 @@ const AdminDashboard = () => {
                                             <span className={resultado >= 0 ? 'text-green-400' : 'text-red-400'}>
                                                 ${Math.round(resultado).toLocaleString()}
                                             </span>
+                                        </div>
+                                    );
+                                })()}
+                            </div>
+                        </div>
+
+                        {/* Costos Fijos/Variables + Punto de Equilibrio */}
+                        <div className="bg-zinc-900 border border-zinc-800/60 rounded-2xl overflow-hidden shadow-2xl">
+                            <div className="p-5 border-b border-zinc-800 bg-zinc-950/40 flex justify-between items-center">
+                                <h3 className="font-serif font-bold text-white text-lg">Análisis de Costos y Punto de Equilibrio</h3>
+                                <button onClick={() => setActiveTab('configuracion')} className="text-[10px] font-bold uppercase text-fire hover:text-orange-300 transition-colors">Configurar Costos →</button>
+                            </div>
+                            <div className="p-6">
+                                {(() => {
+                                    const costosFijos = costosList.filter(c => c.tipo_costo === 'FIJO' && c.activo);
+                                    const costosVariables = costosList.filter(c => c.tipo_costo === 'VARIABLE' && c.activo);
+
+                                    // Normalize costs to monthly
+                                    const toMonthly = (monto, periodicidad) => {
+                                        const n = Number(monto || 0);
+                                        switch(periodicidad) {
+                                            case 'DIARIO': return n * 30;
+                                            case 'SEMANAL': return n * 4.33;
+                                            case 'QUINCENAL': return n * 2;
+                                            case 'MENSUAL': return n;
+                                            case 'ANUAL': return n / 12;
+                                            default: return n;
+                                        }
+                                    };
+
+                                    const totalFijosMensual = costosFijos.reduce((sum, c) => sum + toMonthly(c.monto, c.periodicidad), 0);
+                                    const totalVariablesMensual = costosVariables.reduce((sum, c) => sum + toMonthly(c.monto, c.periodicidad), 0);
+                                    const ventas = salesKPIs?.totalVentas || 0;
+                                    const cogs = cogsTotal || 0;
+
+                                    const margenBruto = ventas - cogs;
+                                    const margenContribucion = margenBruto - totalVariablesMensual;
+                                    const margenContribucionPct = ventas > 0 ? (margenContribucion / ventas) * 100 : 0;
+                                    const puntoEquilibrio = margenContribucionPct > 0 ? totalFijosMensual / (margenContribucionPct / 100) : 0;
+
+                                    const hasCosts = costosFijos.length > 0 || costosVariables.length > 0;
+
+                                    if (!hasCosts) {
+                                        return (
+                                            <div className="text-center py-8 space-y-2">
+                                                <p className="text-zinc-500 text-sm">No hay costos configurados.</p>
+                                                <p className="text-zinc-600 text-xs">Configura costos fijos y variables en la pestaña Configuración para calcular el punto de equilibrio.</p>
+                                            </div>
+                                        );
+                                    }
+
+                                    return (
+                                        <div className="space-y-4">
+                                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                                <div className="bg-zinc-950 rounded-xl p-4 border border-blue-500/20">
+                                                    <p className="text-[10px] font-bold uppercase tracking-widest text-blue-400 mb-1">Costos Fijos (Mensual)</p>
+                                                    <p className="text-xl font-bold text-white">${Math.round(totalFijosMensual).toLocaleString()}</p>
+                                                    <p className="text-[10px] text-zinc-500 mt-1">{costosFijos.length} costo{costosFijos.length !== 1 ? 's' : ''} activo{costosFijos.length !== 1 ? 's' : ''}</p>
+                                                </div>
+                                                <div className="bg-zinc-950 rounded-xl p-4 border border-orange-500/20">
+                                                    <p className="text-[10px] font-bold uppercase tracking-widest text-orange-400 mb-1">Costos Variables (Mensual)</p>
+                                                    <p className="text-xl font-bold text-white">${Math.round(totalVariablesMensual).toLocaleString()}</p>
+                                                    <p className="text-[10px] text-zinc-500 mt-1">{costosVariables.length} costo{costosVariables.length !== 1 ? 's' : ''} activo{costosVariables.length !== 1 ? 's' : ''}</p>
+                                                </div>
+                                                <div className="bg-zinc-950 rounded-xl p-4 border border-purple-500/20">
+                                                    <p className="text-[10px] font-bold uppercase tracking-widest text-purple-400 mb-1">Margen de Contribución</p>
+                                                    <p className="text-xl font-bold text-white">${Math.round(margenContribucion).toLocaleString()}</p>
+                                                    <p className="text-[10px] text-zinc-500 mt-1">{margenContribucionPct.toFixed(1)}% de ventas</p>
+                                                </div>
+                                            </div>
+
+                                            <div className={`rounded-xl p-5 border ${puntoEquilibrio > 0 && ventas >= puntoEquilibrio ? 'border-green-500/30 bg-green-500/5' : 'border-fire/30 bg-fire/5'}`}>
+                                                <div className="flex items-center justify-between flex-wrap gap-2">
+                                                    <div>
+                                                        <p className="text-[10px] font-bold uppercase tracking-widest text-fire mb-1">📊 Punto de Equilibrio</p>
+                                                        <p className="text-2xl font-bold text-white">{puntoEquilibrio > 0 ? `$${Math.round(puntoEquilibrio).toLocaleString()}` : 'Datos insuficientes'}</p>
+                                                        <p className="text-[10px] text-zinc-400 mt-1">Ventas necesarias para cubrir costos fijos + variables + COGS</p>
+                                                    </div>
+                                                    {puntoEquilibrio > 0 && (
+                                                        <div className="text-right">
+                                                            <p className={`text-lg font-bold ${ventas >= puntoEquilibrio ? 'text-green-400' : 'text-red-400'}`}>
+                                                                {ventas >= puntoEquilibrio ? '✅ SUPERADO' : '⚠️ POR DEBAJO'}
+                                                            </p>
+                                                            <p className="text-[10px] text-zinc-400">Ventas actuales: ${ventas.toLocaleString()}</p>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            {/* Cost detail table */}
+                                            <div className="space-y-2">
+                                                {costosFijos.map(c => (
+                                                    <div key={c.id} className="flex justify-between items-center text-xs px-2 py-1.5 rounded bg-zinc-950/50">
+                                                        <span className="text-zinc-400"><span className="text-blue-400 font-bold">FIJO</span> · {c.nombre} ({c.periodicidad})</span>
+                                                        <span className="font-bold text-zinc-300">${Number(c.monto).toLocaleString()} → ${Math.round(toMonthly(c.monto, c.periodicidad)).toLocaleString()}/mes</span>
+                                                    </div>
+                                                ))}
+                                                {costosVariables.map(c => (
+                                                    <div key={c.id} className="flex justify-between items-center text-xs px-2 py-1.5 rounded bg-zinc-950/50">
+                                                        <span className="text-zinc-400"><span className="text-orange-400 font-bold">VAR</span> · {c.nombre} ({c.periodicidad})</span>
+                                                        <span className="font-bold text-zinc-300">${Number(c.monto).toLocaleString()} → ${Math.round(toMonthly(c.monto, c.periodicidad)).toLocaleString()}/mes</span>
+                                                    </div>
+                                                ))}
+                                            </div>
                                         </div>
                                     );
                                 })()}
@@ -3800,6 +4106,58 @@ const AdminDashboard = () => {
                                 <ShieldAlert className="text-yellow-500 shrink-0" size={16} />
                                 <span>Las configuraciones críticas están vinculadas a la inmutabilidad de la base de datos de producción y no deben cambiarse sin re-calcular el delta matemático histórico.</span>
                             </div>
+                        </div>
+
+                        {/* Cost Configuration Section */}
+                        <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-2xl space-y-4">
+                            <div className="flex justify-between items-center">
+                                <h3 className="font-bold text-sm text-zinc-200">Configuración de Costos Fijos / Variables</h3>
+                                <button onClick={() => { setEditingCosto(null); setCostoForm({ nombre: '', descripcion: '', tipo_costo: 'FIJO', categoria: 'OTROS', monto: '', periodicidad: 'MENSUAL' }); setShowCostoModal(true); }} className="text-[10px] font-bold uppercase bg-fire/20 text-fire hover:bg-fire/30 px-3 py-1.5 rounded-lg transition-colors">+ Nuevo Costo</button>
+                            </div>
+
+                            {costosList.length === 0 && (
+                                <p className="text-zinc-500 text-xs text-center py-4">No hay costos configurados. Agrega costos fijos y variables para calcular rentabilidad y punto de equilibrio.</p>
+                            )}
+
+                            {/* Costos Fijos */}
+                            {costosList.filter(c => c.tipo_costo === 'FIJO').length > 0 && (
+                                <div className="space-y-2">
+                                    <p className="text-[10px] font-bold uppercase tracking-widest text-blue-400">Costos Fijos</p>
+                                    {costosList.filter(c => c.tipo_costo === 'FIJO').map(c => (
+                                        <div key={c.id} className={`flex items-center justify-between p-3 rounded-lg border ${c.activo ? 'bg-zinc-950 border-zinc-800' : 'bg-zinc-950/50 border-zinc-800/50 opacity-60'}`}>
+                                            <div>
+                                                <p className="text-xs font-bold text-zinc-200">{c.nombre} <span className="text-[10px] text-zinc-500 font-normal">({c.categoria})</span></p>
+                                                {c.descripcion && <p className="text-[10px] text-zinc-500">{c.descripcion}</p>}
+                                                <p className="text-[10px] text-zinc-400">${Number(c.monto).toLocaleString()} / {c.periodicidad}</p>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                <button onClick={() => { setEditingCosto(c.id); setCostoForm({ nombre: c.nombre, descripcion: c.descripcion || '', tipo_costo: c.tipo_costo, categoria: c.categoria, monto: c.monto, periodicidad: c.periodicidad }); setShowCostoModal(true); }} className="text-[10px] text-zinc-400 hover:text-white transition-colors">Editar</button>
+                                                <button onClick={() => handleToggleCosto(c)} disabled={actionLoading} className={`text-[10px] font-bold px-2 py-0.5 rounded ${c.activo ? 'bg-red-500/10 text-red-400' : 'bg-green-500/10 text-green-400'}`}>{c.activo ? 'Desactivar' : 'Activar'}</button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            {/* Costos Variables */}
+                            {costosList.filter(c => c.tipo_costo === 'VARIABLE').length > 0 && (
+                                <div className="space-y-2">
+                                    <p className="text-[10px] font-bold uppercase tracking-widest text-orange-400">Costos Variables</p>
+                                    {costosList.filter(c => c.tipo_costo === 'VARIABLE').map(c => (
+                                        <div key={c.id} className={`flex items-center justify-between p-3 rounded-lg border ${c.activo ? 'bg-zinc-950 border-zinc-800' : 'bg-zinc-950/50 border-zinc-800/50 opacity-60'}`}>
+                                            <div>
+                                                <p className="text-xs font-bold text-zinc-200">{c.nombre} <span className="text-[10px] text-zinc-500 font-normal">({c.categoria})</span></p>
+                                                {c.descripcion && <p className="text-[10px] text-zinc-500">{c.descripcion}</p>}
+                                                <p className="text-[10px] text-zinc-400">${Number(c.monto).toLocaleString()} / {c.periodicidad}</p>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                <button onClick={() => { setEditingCosto(c.id); setCostoForm({ nombre: c.nombre, descripcion: c.descripcion || '', tipo_costo: c.tipo_costo, categoria: c.categoria, monto: c.monto, periodicidad: c.periodicidad }); setShowCostoModal(true); }} className="text-[10px] text-zinc-400 hover:text-white transition-colors">Editar</button>
+                                                <button onClick={() => handleToggleCosto(c)} disabled={actionLoading} className={`text-[10px] font-bold px-2 py-0.5 rounded ${c.activo ? 'bg-red-500/10 text-red-400' : 'bg-green-500/10 text-green-400'}`}>{c.activo ? 'Desactivar' : 'Activar'}</button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
                         </div>
                     </div>
                 )}
@@ -5620,6 +5978,101 @@ const AdminDashboard = () => {
                                 className="w-full bg-red-600 hover:bg-red-700 text-white py-3 rounded-lg font-bold transition-all uppercase tracking-wider text-xs shadow-lg disabled:opacity-50"
                             >
                                 {actionLoading ? 'Procesando...' : '⚠️ Confirmar Anulación de Liquidación'}
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Modal Solicitar Anulación de Venta */}
+                {showSolicitarAnulacionModal && (
+                    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[999]">
+                        <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-2xl relative space-y-4 font-sans">
+                            <div className="flex justify-between items-center border-b border-zinc-800 pb-3">
+                                <h3 className="text-base font-bold font-serif text-red-400 flex items-center gap-2">
+                                    🚨 {currentUserProfile?.es_socio ? 'Anular Venta' : 'Solicitar Anulación de Venta'}
+                                </h3>
+                                <button onClick={() => setShowSolicitarAnulacionModal(null)} className="text-zinc-500 hover:text-white">✕</button>
+                            </div>
+
+                            <div className="space-y-3 text-xs">
+                                <div className="p-3 bg-zinc-950 rounded-lg border border-zinc-800">
+                                    <p className="text-zinc-400">Venta por <span className="font-bold text-white">${Number(showSolicitarAnulacionModal.total).toLocaleString()}</span></p>
+                                    <p className="text-zinc-500">{new Date(showSolicitarAnulacionModal.fecha).toLocaleString('es-ES')} · {showSolicitarAnulacionModal.metodo_pago}</p>
+                                </div>
+                                <div className="p-3 bg-yellow-500/5 border border-yellow-500/10 rounded-lg text-yellow-400">
+                                    {currentUserProfile?.es_socio
+                                        ? 'Como administrador, esta anulación se ejecutará de forma inmediata.'
+                                        : 'Esta solicitud requiere la aprobación de un administrador antes de ejecutarse.'}
+                                </div>
+                                <label className="text-xs font-bold uppercase tracking-wider text-zinc-400 block">Motivo de anulación (obligatorio)</label>
+                                <textarea
+                                    rows="3"
+                                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-white focus:border-fire outline-none resize-none text-xs"
+                                    placeholder="Describir el motivo por el cual se solicita anular esta venta..."
+                                    value={anulacionMotivo}
+                                    onChange={(e) => setAnulacionMotivo(e.target.value)}
+                                />
+                            </div>
+
+                            <button
+                                onClick={handleSolicitarAnulacion}
+                                disabled={actionLoading || !anulacionMotivo.trim()}
+                                className="w-full bg-red-600 hover:bg-red-700 text-white py-3 rounded-lg font-bold transition-all uppercase tracking-wider text-xs shadow-lg disabled:opacity-50"
+                            >
+                                {actionLoading ? 'Procesando...' : currentUserProfile?.es_socio ? '⚠️ Anular Venta Ahora' : 'Enviar Solicitud de Anulación'}
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Modal Nuevo/Editar Costo */}
+                {showCostoModal && (
+                    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[999]">
+                        <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-2xl relative space-y-4 font-sans">
+                            <div className="flex justify-between items-center border-b border-zinc-800 pb-3">
+                                <h3 className="text-base font-bold font-serif text-white">{editingCosto ? 'Editar Costo' : 'Nuevo Costo'}</h3>
+                                <button onClick={() => setShowCostoModal(false)} className="text-zinc-500 hover:text-white">✕</button>
+                            </div>
+
+                            <div className="space-y-3">
+                                <input type="text" placeholder="Nombre del costo" className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-white focus:border-fire outline-none text-xs" value={costoForm.nombre} onChange={(e) => setCostoForm(f => ({ ...f, nombre: e.target.value }))} />
+                                <input type="text" placeholder="Descripción (opcional)" className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-white focus:border-fire outline-none text-xs" value={costoForm.descripcion} onChange={(e) => setCostoForm(f => ({ ...f, descripcion: e.target.value }))} />
+                                <div className="grid grid-cols-2 gap-3">
+                                    <select className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-white text-xs focus:border-fire outline-none" value={costoForm.tipo_costo} onChange={(e) => setCostoForm(f => ({ ...f, tipo_costo: e.target.value }))}>
+                                        <option value="FIJO">Fijo</option>
+                                        <option value="VARIABLE">Variable</option>
+                                    </select>
+                                    <select className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-white text-xs focus:border-fire outline-none" value={costoForm.categoria} onChange={(e) => setCostoForm(f => ({ ...f, categoria: e.target.value }))}>
+                                        <option value="ARRIENDO">Arriendo</option>
+                                        <option value="SERVICIOS">Servicios</option>
+                                        <option value="PERSONAL">Personal</option>
+                                        <option value="ADMINISTRATIVO">Administrativo</option>
+                                        <option value="SOFTWARE">Software</option>
+                                        <option value="COMISIONES">Comisiones</option>
+                                        <option value="EMPAQUES">Empaques</option>
+                                        <option value="DOMICILIOS">Domicilios</option>
+                                        <option value="PASARELAS">Pasarelas</option>
+                                        <option value="OTROS">Otros</option>
+                                    </select>
+                                </div>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <input type="number" placeholder="Monto ($)" className="bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-white focus:border-fire outline-none text-xs" value={costoForm.monto} onChange={(e) => setCostoForm(f => ({ ...f, monto: e.target.value }))} />
+                                    <select className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-white text-xs focus:border-fire outline-none" value={costoForm.periodicidad} onChange={(e) => setCostoForm(f => ({ ...f, periodicidad: e.target.value }))}>
+                                        <option value="DIARIO">Diario</option>
+                                        <option value="SEMANAL">Semanal</option>
+                                        <option value="QUINCENAL">Quincenal</option>
+                                        <option value="MENSUAL">Mensual</option>
+                                        <option value="ANUAL">Anual</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <button
+                                onClick={handleSaveCosto}
+                                disabled={actionLoading || !costoForm.nombre.trim() || !costoForm.monto}
+                                className="w-full bg-fire hover:bg-orange-700 text-white py-3 rounded-lg font-bold transition-all uppercase tracking-wider text-xs shadow-lg disabled:opacity-50"
+                            >
+                                {actionLoading ? 'Guardando...' : editingCosto ? 'Actualizar Costo' : 'Crear Costo'}
                             </button>
                         </div>
                     </div>
