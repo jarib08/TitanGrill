@@ -270,6 +270,7 @@ const POS = () => {
                 }
             };
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [showQrModal]);
 
     const handleScannedQr = async (decodedText, scanner) => {
