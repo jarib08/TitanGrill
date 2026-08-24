@@ -166,7 +166,7 @@ const MenuGrid = () => {
                             className="inline-flex items-center gap-2 bg-gradient-to-r from-orange-600 to-fire hover:from-orange-500 hover:to-fire text-white px-8 py-4 rounded-2xl text-xs font-extrabold uppercase tracking-widest shadow-xl shadow-fire/30 transition-all hover:scale-105 active:scale-95 border border-fire/40"
                         >
                             <ShoppingBag size={18} />
-                            Ver Todo el Menú y Pedir Virtualmente
+                            Hacer Pedido Virtual
                         </Link>
                     </div>
                 </div>

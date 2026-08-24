@@ -1,17 +1,21 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { useNavigate } from 'react-router-dom';
-import { ShoppingCart, User, Search, Plus, Minus, Trash2, LogOut, CheckCircle, RefreshCw, Key, ShieldAlert, Award, QrCode, UserPlus, Camera, X, Check } from 'lucide-react';
+import { ShoppingCart, User, Search, Plus, Minus, Trash2, LogOut, CheckCircle, RefreshCw, Key, ShieldAlert, Award, QrCode, UserPlus, Camera, X, Check, AlertCircle } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
+import NumericInput from './ui/NumericInput';
 
 // Products loaded dynamically from Supabase
 
 const POS = () => {
     const navigate = useNavigate();
+    const isSubmittingRef = useRef(false); // B18: double-click guard
     const [worker, setWorker] = useState(null);
     const [cart, setCart] = useState([]);
     const [categoryFilter, setCategoryFilter] = useState('Todos');
     const [discount, setDiscount] = useState(0);
+    const [discountType, setDiscountType] = useState('pesos'); // 'pesos' | 'porcentaje'
+    const [discountInput, setDiscountInput] = useState(0); // raw input value
     const [paymentMethod, setPaymentMethod] = useState('EFECTIVO');
 
     // Dynamic product catalog
@@ -55,6 +59,14 @@ const POS = () => {
 
     // Modal view states
     const [showCloseModal, setShowCloseModal] = useState(false);
+
+    // Bloque 10: Worker recent sales + cancellation request
+    const [showRecentSalesModal, setShowRecentSalesModal] = useState(false);
+    const [recentSales, setRecentSales] = useState([]);
+    const [recentSalesLoading, setRecentSalesLoading] = useState(false);
+    const [showAnulacionModal, setShowAnulacionModal] = useState(null); // venta object
+    const [anulacionMotivo, setAnulacionMotivo] = useState('');
+    const [anulacionSubmitting, setAnulacionSubmitting] = useState(false);
 
     // UI state
     const [loading, setLoading] = useState(false);
@@ -193,7 +205,20 @@ const POS = () => {
     };
 
     const subtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-    const finalTotal = Math.max(0, subtotal - discount);
+    // Calculate effective discount based on type
+    const effectiveDiscount = (() => {
+        if (discountType === 'porcentaje') {
+            const pct = Math.min(100, Math.max(0, discountInput));
+            return Math.round(subtotal * pct / 100);
+        }
+        return Math.min(subtotal, Math.max(0, discountInput));
+    })();
+    const finalTotal = Math.max(0, subtotal - effectiveDiscount);
+
+    // Sync effectiveDiscount → discount state (used by RPC)
+    useEffect(() => {
+        setDiscount(effectiveDiscount);
+    }, [effectiveDiscount]);
 
     // Search clients
     const handleSearchClient = async (e) => {
@@ -218,15 +243,40 @@ const POS = () => {
     };
 
     // QR Scanner Camera Lifecycle
+    const [qrCameraStatus, setQrCameraStatus] = useState('idle'); // 'idle' | 'requesting' | 'active' | 'error'
+    const [qrCameraError, setQrCameraError] = useState('');
+
     useEffect(() => {
         let html5QrCode = null;
         let isMounted = true;
+        let cameraTimeout = null;
 
         if (showQrModal) {
-            const timer = setTimeout(() => {
+            setQrCameraStatus('requesting');
+            setQrCameraError('');
+
+            const timer = setTimeout(async () => {
                 const qrRegionId = "pos-qr-reader-region";
                 const element = document.getElementById(qrRegionId);
                 if (!element) return;
+
+                // Pre-check camera availability
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    if (isMounted) {
+                        setQrCameraStatus('error');
+                        setQrCameraError('Tu navegador no soporta acceso a la cámara. Usa Chrome o Safari actualizados.');
+                    }
+                    return;
+                }
+
+                // Check HTTPS requirement (camera requires secure context)
+                if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+                    if (isMounted) {
+                        setQrCameraStatus('error');
+                        setQrCameraError('Se requiere conexión HTTPS para acceder a la cámara. Usa un tunnel seguro.');
+                    }
+                    return;
+                }
 
                 html5QrCode = new Html5Qrcode(qrRegionId);
                 
@@ -242,6 +292,14 @@ const POS = () => {
                     aspectRatio: 1.0
                 };
 
+                // Set a timeout for camera initialization
+                cameraTimeout = setTimeout(() => {
+                    if (isMounted && qrCameraStatus === 'requesting') {
+                        setQrCameraStatus('error');
+                        setQrCameraError('La cámara tardó demasiado en responder. Verifica los permisos del navegador e intenta de nuevo.');
+                    }
+                }, 8000);
+
                 html5QrCode.start(
                     { facingMode: "environment" },
                     config,
@@ -252,15 +310,32 @@ const POS = () => {
                         }
                     },
                     () => {}
-                ).catch(err => {
+                ).then(() => {
+                    if (isMounted) {
+                        clearTimeout(cameraTimeout);
+                        setQrCameraStatus('active');
+                    }
+                }).catch(err => {
                     console.error("Camera access error:", err);
-                    setErrorMessage("No se pudo acceder a la cámara. Verifica los permisos de cámara del navegador.");
+                    clearTimeout(cameraTimeout);
+                    if (isMounted) {
+                        setQrCameraStatus('error');
+                        const msg = String(err?.message || err || '');
+                        if (msg.includes('Permission') || msg.includes('NotAllowed')) {
+                            setQrCameraError('Permiso de cámara denegado. Ve a la configuración del navegador y permite el acceso a la cámara.');
+                        } else if (msg.includes('NotFound') || msg.includes('DevicesNotFound')) {
+                            setQrCameraError('No se encontró una cámara en este dispositivo.');
+                        } else {
+                            setQrCameraError('No se pudo acceder a la cámara. Verifica los permisos del navegador.');
+                        }
+                    }
                 });
             }, 300);
 
             return () => {
                 isMounted = false;
                 clearTimeout(timer);
+                clearTimeout(cameraTimeout);
                 if (html5QrCode) {
                     if (html5QrCode.isScanning) {
                         html5QrCode.stop().then(() => html5QrCode.clear()).catch(console.error);
@@ -384,6 +459,45 @@ const POS = () => {
     };
 
     // Open cash drawer handler
+    // Bloque 10: Fetch recent sales for this worker
+    const fetchRecentSales = async () => {
+        setRecentSalesLoading(true);
+        try {
+            const { data, error } = await supabase
+                .from('ventas')
+                .select('id, fecha, total, metodo_pago, estado, detalles, clientes(nombre)')
+                .eq('trabajador_id', worker?.id)
+                .order('fecha', { ascending: false })
+                .limit(15);
+            if (!error && data) setRecentSales(data);
+        } catch (err) {
+            console.error('Error fetching recent sales:', err);
+        } finally {
+            setRecentSalesLoading(false);
+        }
+    };
+
+    const handleSolicitarAnulacion = async () => {
+        if (!showAnulacionModal || !anulacionMotivo.trim()) return;
+        setAnulacionSubmitting(true);
+        try {
+            const { data, error } = await supabase.rpc('solicitar_anulacion_venta', {
+                p_venta_id: showAnulacionModal.id,
+                p_motivo: anulacionMotivo.trim()
+            });
+            if (error) throw error;
+            if (data && !data.success) throw new Error(data.message);
+            setSuccessMessage(data.message || 'Solicitud de anulación enviada.');
+            setShowAnulacionModal(null);
+            setAnulacionMotivo('');
+            await fetchRecentSales();
+        } catch (err) {
+            setErrorMessage('Error: ' + err.message);
+        } finally {
+            setAnulacionSubmitting(false);
+        }
+    };
+
     const handleOpenSession = async () => {
         setLoading(true);
         setErrorMessage('');
@@ -441,6 +555,9 @@ const POS = () => {
     };
 
     const handleRegisterSale = async () => {
+        // B18: Prevent double-click
+        if (isSubmittingRef.current) return;
+
         if (!activeSession) {
             setErrorMessage('Se requiere abrir caja antes de registrar ventas.');
             return;
@@ -460,6 +577,7 @@ const POS = () => {
         }
 
         setLoading(true);
+        isSubmittingRef.current = true;
         setErrorMessage('');
         setSuccessMessage('');
 
@@ -485,6 +603,8 @@ const POS = () => {
             // Reset UI
             setCart([]);
             setDiscount(0);
+            setDiscountInput(0);
+            setDiscountType('pesos');
             setSelectedClient(null);
             setExtraClients([]);
             setSearchQuery('');
@@ -503,6 +623,7 @@ const POS = () => {
             setErrorMessage(err.message || 'Error al registrar la venta.');
         } finally {
             setLoading(false);
+            isSubmittingRef.current = false;
         }
     };
 
@@ -524,17 +645,17 @@ const POS = () => {
                             <Key size={24} />
                         </div>
                         <h2 className="text-2xl font-bold font-serif text-white">Caja Cerrada</h2>
-                        <p className="text-zinc-500 text-xs mt-2">Para comenzar a operar el POS debes ingresar el monto inicial de apertura</p>
+                        <p className="text-zinc-500 text-xs mt-2">Ingresa el dinero físico en efectivo con el que comienzas la jornada para dar vueltas</p>
                     </div>
 
                     <div className="space-y-4">
                         <div>
-                            <label className="text-xs font-bold uppercase tracking-wider text-zinc-400 block mb-2">Monto de Apertura ($)</label>
-                            <input
-                                type="number"
+                            <label className="text-xs font-bold uppercase tracking-wider text-zinc-400 block mb-2">💵 Fondo Inicial de Efectivo ($)</label>
+                            <NumericInput
                                 className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-white focus:border-fire outline-none text-center font-bold text-lg"
                                 value={openCashAmount}
-                                onChange={(e) => setOpenCashAmount(Number(e.target.value))}
+                                onChange={setOpenCashAmount}
+                                min={0}
                             />
                         </div>
 
@@ -570,7 +691,7 @@ const POS = () => {
                     <div className="w-10 h-10 bg-fire rounded-full flex items-center justify-center font-bold text-white shadow-lg">T</div>
                     <div>
                         <h1 className="text-xl font-bold tracking-wider font-serif">TITAN GRILL POS</h1>
-                        <p className="text-xs text-zinc-500">Caja Abierta • Inicial: ${activeSession.monto_apertura.toLocaleString()}</p>
+                        <p className="text-xs text-zinc-500">Caja Abierta · Fondo Inicial: ${activeSession.monto_apertura.toLocaleString()}</p>
                     </div>
                 </div>
 
@@ -592,11 +713,27 @@ const POS = () => {
                     )}
 
                     <button
+                        onClick={() => { setShowRecentSalesModal(true); fetchRecentSales(); }}
+                        className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white text-xs font-bold px-3 py-2 rounded-lg transition-all border border-zinc-700 whitespace-nowrap"
+                    >
+                        <span className="hidden sm:inline">Mis Ventas</span>
+                        <span className="sm:hidden">Ventas</span>
+                    </button>
+
+                    <button
                         onClick={() => setShowCloseModal(true)}
                         className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white text-xs font-bold px-3 lg:px-4 py-2 rounded-lg transition-all border border-zinc-700 whitespace-nowrap"
                     >
                         <span className="hidden sm:inline">Cerrar Turno (Arqueo)</span>
                         <span className="sm:hidden">Arqueo</span>
+                    </button>
+
+                    <button
+                        onClick={handleLogout}
+                        className="bg-red-500/10 hover:bg-red-500/20 text-red-400 text-xs font-bold p-2 rounded-lg transition-all border border-red-500/20"
+                        title="Cerrar sesión"
+                    >
+                        <LogOut size={16} />
                     </button>
 
                     {worker && (
@@ -781,8 +918,10 @@ const POS = () => {
 
                         {/* Client Search (Fidelización) */}
                         <div className="border-t border-zinc-800 pt-4 space-y-3">
-                            <div className="flex justify-between items-center">
-                                <label className="text-xs font-bold uppercase tracking-wider text-zinc-400">Asociar Cliente (Fidelización)</label>
+                            <div className="flex justify-between items-center mb-1">
+                                <label className="text-xs font-bold uppercase tracking-wider text-zinc-400">
+                                    {selectedClient ? "Asociar Más Clientes" : "Asociar Cliente"}
+                                </label>
                                 <div className="flex gap-1.5">
                                     <button
                                         type="button"
@@ -802,15 +941,72 @@ const POS = () => {
                                     </button>
                                 </div>
                             </div>
-                            {selectedClient ? (
-                                <div className="space-y-2">
+
+                            {/* Search Bar Always at the Top */}
+                            <div className="relative">
+                                <input
+                                    id="client-search-input"
+                                    type="text"
+                                    placeholder={selectedClient ? "Buscar otro cliente para agregar (celular/nombre)..." : "Buscar por Nombre o Celular..."}
+                                    className="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-9 pr-4 py-2 text-sm text-white focus:border-fire outline-none transition-colors"
+                                    value={searchQuery}
+                                    onChange={handleSearchClient}
+                                />
+                                <Search size={16} className="absolute left-3 top-2.5 text-zinc-600" />
+                                {isSearchingClient && (
+                                    <RefreshCw size={14} className="absolute right-3 top-3 text-fire animate-spin" />
+                                )}
+                                {clients.length > 0 && (
+                                    <div className="absolute left-0 right-0 top-full mt-1 bg-zinc-950 border border-zinc-850 rounded-lg shadow-2xl z-55 max-h-[160px] overflow-y-auto">
+                                        {clients.map(c => (
+                                            <div
+                                                key={c.id}
+                                                onClick={() => {
+                                                    if (!selectedClient) {
+                                                        setSelectedClient(c);
+                                                    } else {
+                                                        if (c.id === selectedClient.id || extraClients.some(ec => ec.id === c.id)) {
+                                                            setErrorMessage(`⚠️ ${c.nombre} ya tiene sello asignado en esta venta.`);
+                                                        } else {
+                                                            setExtraClients(prev => [...prev, c]);
+                                                            setSuccessMessage(`🔥 Sello adicional para: ${c.nombre}`);
+                                                        }
+                                                    }
+                                                    setClients([]);
+                                                    setSearchQuery('');
+                                                }}
+                                                className="p-3 hover:bg-zinc-900 border-b border-zinc-900 cursor-pointer text-left transition-colors"
+                                            >
+                                                <p className="text-xs font-bold text-zinc-200">{c.nombre}</p>
+                                                <p className="text-[10px] text-zinc-500">{c.celular} • {c.stamps_count} Fuegos</p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Selected Clients Area */}
+                            {selectedClient && (
+                                <div className="space-y-2 mt-4">
+                                    <div className="flex items-center gap-2 mb-1">
+                                        <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Cliente Principal</p>
+                                        {(extraClients.length > 0) && (
+                                            <span className="bg-fire/20 text-fire text-[10px] font-black px-2 py-0.5 rounded-full">
+                                                +{extraClients.length} extras
+                                            </span>
+                                        )}
+                                    </div>
+
                                     <div className="flex justify-between items-center bg-fire/10 border border-fire/30 p-3 rounded-lg animate-fadeIn">
                                         <div>
                                             <p className="text-sm font-bold text-fire">{selectedClient.nombre}</p>
                                             <p className="text-xs text-zinc-400">{selectedClient.celular} • {selectedClient.stamps_count} Fuegos</p>
                                         </div>
                                         <button 
-                                            onClick={() => setSelectedClient(null)}
+                                            onClick={() => {
+                                                setSelectedClient(null);
+                                                setExtraClients([]); // Limpiar extras si se quita el principal
+                                            }}
                                             className="text-xs bg-fire/20 hover:bg-fire/35 text-fire px-2.5 py-1 rounded font-bold"
                                         >
                                             Quitar
@@ -853,51 +1049,12 @@ const POS = () => {
 
                                     {/* Multi-stamp: extra clients for this sale */}
                                     {extraClients.length > 0 && (
-                                        <div className="space-y-1 mt-2">
+                                        <div className="space-y-1 mt-3">
                                             <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Sellos adicionales</p>
                                             {extraClients.map(ec => (
                                                 <div key={ec.id} className="flex justify-between items-center bg-zinc-800/50 border border-zinc-700 p-2 rounded-lg text-xs">
                                                     <span className="text-zinc-300">🔥 {ec.nombre}</span>
                                                     <button onClick={() => setExtraClients(prev => prev.filter(x => x.id !== ec.id))} className="text-red-400 hover:text-red-300 text-[10px] font-bold">✕</button>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
-                                    <button
-                                        type="button"
-                                        onClick={() => setShowQrModal(true)}
-                                        className="w-full mt-1 text-[10px] font-bold uppercase tracking-wider text-zinc-500 hover:text-fire border border-dashed border-zinc-700 hover:border-fire/40 rounded-lg py-2 transition-colors"
-                                    >
-                                        + Agregar sello a otro cliente
-                                    </button>
-                                </div>
-                            ) : (
-                                <div className="relative">
-                                    <input
-                                        type="text"
-                                        placeholder="Buscar por Nombre o Celular..."
-                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-9 pr-4 py-2 text-sm text-white focus:border-fire outline-none transition-colors"
-                                        value={searchQuery}
-                                        onChange={handleSearchClient}
-                                    />
-                                    <Search size={16} className="absolute left-3 top-2.5 text-zinc-600" />
-                                    {isSearchingClient && (
-                                        <RefreshCw size={14} className="absolute right-3 top-3 text-fire animate-spin" />
-                                    )}
-                                    {clients.length > 0 && (
-                                        <div className="absolute left-0 right-0 top-full mt-1 bg-zinc-950 border border-zinc-850 rounded-lg shadow-2xl z-55 max-h-[160px] overflow-y-auto">
-                                            {clients.map(c => (
-                                                <div
-                                                    key={c.id}
-                                                    onClick={() => {
-                                                        setSelectedClient(c);
-                                                        setClients([]);
-                                                        setSearchQuery('');
-                                                    }}
-                                                    className="p-3 hover:bg-zinc-900 border-b border-zinc-900 cursor-pointer text-left transition-colors"
-                                                >
-                                                    <p className="text-xs font-bold text-zinc-200">{c.nombre}</p>
-                                                    <p className="text-[10px] text-zinc-500">{c.celular} • {c.stamps_count} Fuegos</p>
                                                 </div>
                                             ))}
                                         </div>
@@ -944,12 +1101,12 @@ const POS = () => {
                                 <div className="bg-zinc-950 p-3.5 rounded-xl border border-zinc-800 space-y-3 mt-2 animate-fadeIn shadow-inner">
                                     <div className="flex items-center justify-between gap-2">
                                         <span className="text-xs text-zinc-300 font-medium">💵 Efectivo ($)</span>
-                                        <input
-                                            type="number"
+                                        <NumericInput
                                             className="w-32 bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-right text-xs font-bold text-white outline-none focus:border-fire"
-                                            value={cashAmount || ''}
+                                            value={cashAmount}
                                             placeholder="0"
-                                            onChange={(e) => setCashAmount(Number(e.target.value))}
+                                            onChange={setCashAmount}
+                                            min={0}
                                         />
                                     </div>
                                     <div className="flex items-center justify-between gap-2">
@@ -966,12 +1123,12 @@ const POS = () => {
                                                 ⚡ Restante
                                             </button>
                                         </div>
-                                        <input
-                                            type="number"
+                                        <NumericInput
                                             className="w-32 bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-right text-xs font-bold text-white outline-none focus:border-fire"
-                                            value={nequiAmount || ''}
+                                            value={nequiAmount}
                                             placeholder="0"
-                                            onChange={(e) => setNequiAmount(Number(e.target.value))}
+                                            onChange={setNequiAmount}
+                                            min={0}
                                         />
                                     </div>
                                     <div className="flex items-center justify-between gap-2">
@@ -988,12 +1145,12 @@ const POS = () => {
                                                 ⚡ Restante
                                             </button>
                                         </div>
-                                        <input
-                                            type="number"
+                                        <NumericInput
                                             className="w-32 bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-right text-xs font-bold text-white outline-none focus:border-fire"
-                                            value={bancolombiaAmount || ''}
+                                            value={bancolombiaAmount}
                                             placeholder="0"
-                                            onChange={(e) => setBancolombiaAmount(Number(e.target.value))}
+                                            onChange={setBancolombiaAmount}
+                                            min={0}
                                         />
                                     </div>
 
@@ -1015,14 +1172,51 @@ const POS = () => {
                                 <span>Subtotal</span>
                                 <span className="text-zinc-200">${subtotal.toLocaleString()}</span>
                             </div>
-                            <div className="flex justify-between items-center">
-                                <span>Descuento ($)</span>
-                                <input
-                                    type="number"
-                                    className="w-20 bg-zinc-900 border border-zinc-800 rounded px-2 py-0.5 text-right text-xs text-zinc-200"
-                                    value={discount}
-                                    onChange={(e) => setDiscount(Number(e.target.value))}
-                                />
+                            <div className="space-y-2">
+                                <div className="flex justify-between items-center">
+                                    <span>Descuento</span>
+                                    <div className="flex bg-zinc-800 rounded-lg p-0.5 gap-0.5">
+                                        <button
+                                            type="button"
+                                            onClick={() => { setDiscountType('pesos'); setDiscountInput(0); }}
+                                            className={`px-2.5 py-1 rounded-md text-[10px] font-bold transition-all ${
+                                                discountType === 'pesos'
+                                                    ? 'bg-fire text-white shadow'
+                                                    : 'text-zinc-400 hover:text-white'
+                                            }`}
+                                        >
+                                            $ Pesos
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => { setDiscountType('porcentaje'); setDiscountInput(0); }}
+                                            className={`px-2.5 py-1 rounded-md text-[10px] font-bold transition-all ${
+                                                discountType === 'porcentaje'
+                                                    ? 'bg-fire text-white shadow'
+                                                    : 'text-zinc-400 hover:text-white'
+                                            }`}
+                                        >
+                                            % Porcentaje
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="flex justify-between items-center gap-2">
+                                    <span className="text-[11px] text-zinc-500">
+                                        {discountType === 'porcentaje' ? `= $${effectiveDiscount.toLocaleString()}` : ''}
+                                    </span>
+                                    <div className="flex items-center gap-1">
+                                        <span className="text-[10px] text-zinc-500 font-bold">
+                                            {discountType === 'pesos' ? '$' : '%'}
+                                        </span>
+                                        <NumericInput
+                                            className="w-20 bg-zinc-900 border border-zinc-800 rounded px-2 py-0.5 text-right text-xs text-zinc-200"
+                                            value={discountInput}
+                                            onChange={setDiscountInput}
+                                            min={0}
+                                            max={discountType === 'porcentaje' ? 100 : subtotal}
+                                        />
+                                    </div>
+                                </div>
                             </div>
                             <div className="flex justify-between border-t border-zinc-800 pt-3 text-lg font-bold text-white">
                                 <span>Total</span>
@@ -1084,8 +1278,8 @@ const POS = () => {
 
             {/* Modal: Close Drawer / Arqueo — Multi-method */}
             {showCloseModal && (
-                <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[999] overflow-y-auto">
-                    <div className="w-full max-w-lg bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-2xl relative space-y-5 my-4">
+                <div className="fixed inset-0 bg-black/85 flex items-start sm:items-center justify-center p-2 sm:p-4 z-[999] overflow-y-auto">
+                    <div className="w-full max-w-lg bg-zinc-900 border border-zinc-800 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-2xl relative space-y-4 sm:space-y-5 my-2 sm:my-4 max-h-[95dvh] overflow-y-auto">
                         <div className="flex justify-between items-center border-b border-zinc-800 pb-3">
                             <h3 className="text-lg font-bold font-serif text-white">Cierre de Caja y Arqueo</h3>
                             <button onClick={() => setShowCloseModal(false)} className="text-zinc-500 hover:text-white">✕</button>
@@ -1099,7 +1293,7 @@ const POS = () => {
                                     <span className="text-zinc-400">Esperado</span>
                                     <span className="font-bold text-green-400">${expectedCashAtClose.toLocaleString()}</span>
                                 </div>
-                                <input type="number" className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-white focus:border-fire outline-none text-center font-bold text-sm" placeholder="Contado" value={closeCashCounted} onChange={(e) => setCloseCashCounted(Number(e.target.value))} />
+                                <NumericInput className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2.5 sm:py-2 text-white focus:border-fire outline-none text-center font-bold text-base sm:text-sm" placeholder="Contado" value={closeCashCounted} onChange={setCloseCashCounted} min={0} />
                                 <div className="flex justify-between items-center text-xs">
                                     <span className="text-zinc-500">Diferencia</span>
                                     <span className={`font-bold ${closeCashCounted - expectedCashAtClose === 0 ? 'text-green-500' : 'text-fire'}`}>${(closeCashCounted - expectedCashAtClose).toLocaleString()}</span>
@@ -1113,7 +1307,7 @@ const POS = () => {
                                     <span className="text-zinc-400">Esperado</span>
                                     <span className="font-bold text-purple-400">${expectedNequiAtClose.toLocaleString()}</span>
                                 </div>
-                                <input type="number" className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-white focus:border-fire outline-none text-center font-bold text-sm" placeholder="Contado" value={closeNequiCounted} onChange={(e) => setCloseNequiCounted(Number(e.target.value))} />
+                                <NumericInput className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2.5 sm:py-2 text-white focus:border-fire outline-none text-center font-bold text-base sm:text-sm" placeholder="Contado" value={closeNequiCounted} onChange={setCloseNequiCounted} min={0} />
                                 <div className="flex justify-between items-center text-xs">
                                     <span className="text-zinc-500">Diferencia</span>
                                     <span className={`font-bold ${closeNequiCounted - expectedNequiAtClose === 0 ? 'text-green-500' : 'text-fire'}`}>${(closeNequiCounted - expectedNequiAtClose).toLocaleString()}</span>
@@ -1127,7 +1321,7 @@ const POS = () => {
                                     <span className="text-zinc-400">Esperado</span>
                                     <span className="font-bold text-yellow-400">${expectedBancoAtClose.toLocaleString()}</span>
                                 </div>
-                                <input type="number" className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-white focus:border-fire outline-none text-center font-bold text-sm" placeholder="Contado" value={closeBancoCounted} onChange={(e) => setCloseBancoCounted(Number(e.target.value))} />
+                                <NumericInput className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2.5 sm:py-2 text-white focus:border-fire outline-none text-center font-bold text-base sm:text-sm" placeholder="Contado" value={closeBancoCounted} onChange={setCloseBancoCounted} min={0} />
                                 <div className="flex justify-between items-center text-xs">
                                     <span className="text-zinc-500">Diferencia</span>
                                     <span className={`font-bold ${closeBancoCounted - expectedBancoAtClose === 0 ? 'text-green-500' : 'text-fire'}`}>${(closeBancoCounted - expectedBancoAtClose).toLocaleString()}</span>
@@ -1197,22 +1391,74 @@ const POS = () => {
 
                         {/* QR Video Container with Custom High-Tech Viewfinder Overlay */}
                         <div className="w-full h-64 bg-zinc-950 rounded-2xl overflow-hidden border border-zinc-800 relative shadow-inner">
-                            <div id="pos-qr-reader-region" className="w-full h-full" />
-                            
-                            {/* Custom Sleek Dark Viewfinder Overlay */}
-                            <div className="absolute inset-0 pointer-events-none flex items-center justify-center z-10">
-                                <div className="w-48 h-48 relative border-2 border-fire/60 rounded-2xl shadow-[0_0_20px_rgba(255,69,0,0.3)]">
-                                    {/* Glowing Corners */}
-                                    <div className="absolute -top-1 -left-1 w-5 h-5 border-t-4 border-l-4 border-fire rounded-tl" />
-                                    <div className="absolute -top-1 -right-1 w-5 h-5 border-t-4 border-r-4 border-fire rounded-tr" />
-                                    <div className="absolute -bottom-1 -left-1 w-5 h-5 border-b-4 border-l-4 border-fire rounded-bl" />
-                                    <div className="absolute -bottom-1 -right-1 w-5 h-5 border-b-4 border-r-4 border-fire rounded-br" />
+                            {qrCameraStatus === 'error' ? (
+                                <div className="w-full h-full flex flex-col items-center justify-center gap-3 p-4">
+                                    <AlertCircle size={32} className="text-red-400" />
+                                    <p className="text-xs text-red-400 text-center font-medium">{qrCameraError}</p>
+                                    <button
+                                        type="button"
+                                        onClick={() => { setShowQrModal(false); setTimeout(() => setShowQrModal(true), 100); }}
+                                        className="text-[10px] font-bold bg-fire/20 text-fire px-3 py-1.5 rounded-lg hover:bg-fire/30 transition-colors"
+                                    >
+                                        🔄 Reintentar
+                                    </button>
+                                </div>
+                            ) : (
+                                <>
+                                    <div id="pos-qr-reader-region" className="w-full h-full" />
                                     
-                                    {/* Animated Scanning Laser */}
-                                    <div className="w-full h-0.5 bg-gradient-to-r from-transparent via-fire to-transparent shadow-[0_0_8px_#ff4500] animate-pulse relative top-1/2 -translate-y-1/2" />
+                                    {qrCameraStatus === 'requesting' && (
+                                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-zinc-950/80 z-20">
+                                            <RefreshCw size={24} className="text-fire animate-spin" />
+                                            <p className="text-xs text-zinc-400">Solicitando acceso a la cámara...</p>
+                                        </div>
+                                    )}
+
+                                    {/* Custom Sleek Dark Viewfinder Overlay */}
+                                    <div className="absolute inset-0 pointer-events-none flex items-center justify-center z-10">
+                                        <div className="w-48 h-48 relative border-2 border-fire/60 rounded-2xl shadow-[0_0_20px_rgba(255,69,0,0.3)]">
+                                            {/* Glowing Corners */}
+                                            <div className="absolute -top-1 -left-1 w-5 h-5 border-t-4 border-l-4 border-fire rounded-tl" />
+                                            <div className="absolute -top-1 -right-1 w-5 h-5 border-t-4 border-r-4 border-fire rounded-tr" />
+                                            <div className="absolute -bottom-1 -left-1 w-5 h-5 border-b-4 border-l-4 border-fire rounded-bl" />
+                                            <div className="absolute -bottom-1 -right-1 w-5 h-5 border-b-4 border-r-4 border-fire rounded-br" />
+                                            
+                                            {/* Animated Scanning Laser */}
+                                            <div className="w-full h-0.5 bg-gradient-to-r from-transparent via-fire to-transparent shadow-[0_0_8px_#ff4500] animate-pulse relative top-1/2 -translate-y-1/2" />
+                                        </div>
+                                    </div>
+                                </>
+                            )}
+                        </div>
+
+                        {/* Manual code fallback */}
+                        {qrCameraStatus === 'error' && (
+                            <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-3 space-y-2">
+                                <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Ingreso Manual de Código</p>
+                                <div className="flex gap-2">
+                                    <input
+                                        type="text"
+                                        placeholder="ID o código del cliente..."
+                                        className="flex-1 bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-white focus:border-fire outline-none"
+                                        onKeyDown={async (e) => {
+                                            if (e.key === 'Enter' && e.target.value.trim()) {
+                                                await handleScannedQr(e.target.value.trim(), null);
+                                            }
+                                        }}
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={async (e) => {
+                                            const input = e.target.closest('.space-y-2')?.querySelector('input');
+                                            if (input?.value.trim()) await handleScannedQr(input.value.trim(), null);
+                                        }}
+                                        className="bg-fire hover:bg-orange-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition-colors"
+                                    >
+                                        Buscar
+                                    </button>
                                 </div>
                             </div>
-                        </div>
+                        )}
 
                         <div className="flex gap-2 pt-2">
                             <button
@@ -1317,8 +1563,120 @@ const POS = () => {
                     </form>
                 </div>
             )}
+
+            {/* Modal: Recent Sales (Bloque 10 — Worker can view and request cancellation) */}
+            {showRecentSalesModal && (
+                <div className="fixed inset-0 bg-black/85 flex items-start sm:items-center justify-center p-2 sm:p-4 z-[999] overflow-y-auto">
+                    <div className="w-full max-w-lg bg-zinc-900 border border-zinc-800 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-2xl relative space-y-4 my-2 sm:my-4 max-h-[95dvh] overflow-y-auto">
+                        <div className="flex justify-between items-center border-b border-zinc-800 pb-3">
+                            <h3 className="text-lg font-bold font-serif text-white">Mis Ventas Recientes</h3>
+                            <button onClick={() => setShowRecentSalesModal(false)} className="text-zinc-500 hover:text-white p-1 rounded-lg hover:bg-zinc-800 transition-colors"><X size={20} /></button>
+                        </div>
+
+                        {recentSalesLoading ? (
+                            <div className="flex justify-center py-12">
+                                <div className="w-7 h-7 border-2 border-fire border-t-transparent rounded-full animate-spin" />
+                            </div>
+                        ) : recentSales.length === 0 ? (
+                            <p className="text-zinc-500 text-sm text-center py-8">No hay ventas registradas.</p>
+                        ) : (
+                            <div className="space-y-2">
+                                {recentSales.map(v => {
+                                    const itemCount = Array.isArray(v.detalles?.items) ? v.detalles.items.reduce((s, i) => s + (i.quantity || 1), 0) : 0;
+                                    const isAnulada = v.estado === 'ANULADA';
+                                    return (
+                                        <div key={v.id} className={`p-3 rounded-xl border ${isAnulada ? 'bg-red-500/5 border-red-500/20' : 'bg-zinc-950 border-zinc-800'}`}>
+                                            <div className="flex justify-between items-start">
+                                                <div>
+                                                    <p className="text-xs font-bold text-zinc-200">
+                                                        ${Number(v.total).toLocaleString()}
+                                                        <span className="ml-2 text-[10px] text-zinc-500 font-medium">{v.metodo_pago}</span>
+                                                    </p>
+                                                    <p className="text-[10px] text-zinc-500 mt-0.5">
+                                                        {new Date(v.fecha).toLocaleString('es-CO', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                                                        {v.clientes?.nombre && <span> · {v.clientes.nombre}</span>}
+                                                        {itemCount > 0 && <span> · {itemCount} productos</span>}
+                                                    </p>
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    <span className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-full ${isAnulada ? 'bg-red-500/20 text-red-400' : 'bg-green-500/20 text-green-400'}`}>
+                                                        {v.estado}
+                                                    </span>
+                                                    {v.estado === 'COMPLETADA' && (
+                                                        <button
+                                                            onClick={() => { setShowAnulacionModal(v); setAnulacionMotivo(''); }}
+                                                            className="text-[9px] font-bold text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/20 px-2 py-0.5 rounded-full border border-red-500/20 transition-all"
+                                                        >
+                                                            Anular
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+
+                        <button
+                            onClick={() => setShowRecentSalesModal(false)}
+                            className="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-300 py-2.5 rounded-xl font-bold text-xs transition-all border border-zinc-700"
+                        >
+                            Cerrar
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* Modal: Solicitar Anulación (Bloque 10) */}
+            {showAnulacionModal && (
+                <div className="fixed inset-0 bg-black/90 flex items-center justify-center p-4 z-[1050]">
+                    <div className="w-full max-w-sm bg-zinc-900 border border-zinc-800 rounded-2xl p-5 shadow-2xl space-y-4">
+                        <h4 className="text-base font-bold text-white text-center">Solicitar Anulación</h4>
+                        <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800 text-xs space-y-1">
+                            <p className="text-zinc-400">Venta: <span className="text-white font-bold">${Number(showAnulacionModal.total).toLocaleString()}</span></p>
+                            <p className="text-zinc-400">Fecha: <span className="text-zinc-300">{new Date(showAnulacionModal.fecha).toLocaleString('es-CO')}</span></p>
+                            {showAnulacionModal.clientes?.nombre && (
+                                <p className="text-zinc-400">Cliente: <span className="text-zinc-300">{showAnulacionModal.clientes.nombre}</span></p>
+                            )}
+                        </div>
+
+                        <div>
+                            <label className="text-xs font-bold uppercase tracking-wider text-zinc-400 block mb-1.5">Motivo de Anulación *</label>
+                            <textarea
+                                rows={3}
+                                placeholder="Describe el motivo de la anulación..."
+                                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none focus:border-fire resize-none"
+                                value={anulacionMotivo}
+                                onChange={(e) => setAnulacionMotivo(e.target.value)}
+                            />
+                        </div>
+
+                        {errorMessage && (
+                            <div className="p-2 bg-red-500/10 border border-red-500/20 text-red-500 text-xs rounded text-center">{errorMessage}</div>
+                        )}
+
+                        <div className="flex gap-2">
+                            <button
+                                onClick={handleSolicitarAnulacion}
+                                disabled={anulacionSubmitting || !anulacionMotivo.trim()}
+                                className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition-all disabled:opacity-50"
+                            >
+                                {anulacionSubmitting ? 'Enviando...' : 'Solicitar Anulación'}
+                            </button>
+                            <button
+                                onClick={() => { setShowAnulacionModal(null); setAnulacionMotivo(''); }}
+                                className="px-4 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 py-2.5 rounded-xl font-bold text-xs transition-all border border-zinc-700"
+                            >
+                                Cancelar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
 
 export default POS;
+

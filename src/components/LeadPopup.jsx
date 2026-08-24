@@ -46,6 +46,11 @@ const LeadPopup = () => {
         }
     }, []);
 
+    const handleClose = useCallback(() => {
+        setIsOpen(false);
+        sessionStorage.setItem(STORAGE_KEYS.POPUP_CLOSED, 'true');
+    }, []);
+
     // Handle ESC key to close modal
     useEffect(() => {
         const handleEsc = (e) => {
@@ -96,11 +101,6 @@ const LeadPopup = () => {
         };
 
         validateReferralCode();
-    }, []);
-
-    const handleClose = useCallback(() => {
-        setIsOpen(false);
-        sessionStorage.setItem(STORAGE_KEYS.POPUP_CLOSED, 'true');
     }, []);
 
     const handleCardClose = useCallback(() => {

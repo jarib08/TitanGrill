@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Eye, EyeOff } from 'lucide-react';
 
 const Login = () => {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const navigate = useNavigate();
@@ -110,14 +112,21 @@ const Login = () => {
                             onChange={(e) => setEmail(e.target.value)}
                         />
                     </div>
-                    <div>
+                    <div className="relative">
                         <input
-                            type="password"
+                            type={showPassword ? "text" : "password"}
                             placeholder="Contraseña"
-                            className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-white focus:border-fire outline-none transition-colors"
+                            className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 pr-12 text-white focus:border-fire outline-none transition-colors"
                             value={password}
                             onChange={(e) => setPassword(e.target.value)}
                         />
+                        <button
+                            type="button"
+                            onClick={() => setShowPassword(!showPassword)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300"
+                        >
+                            {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                        </button>
                     </div>
 
                     {error && <p className="text-red-500 text-sm text-center bg-red-500/10 p-2 rounded">{error}</p>}

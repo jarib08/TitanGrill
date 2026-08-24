@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { Users, Flame, Trophy, LogOut, ArrowRight, Award, Gift, DollarSign, Settings, ShoppingBag, Menu, X, Check, ShieldAlert, UtensilsCrossed, Plus, Pencil, PackageCheck, PackageX, Archive, ClipboardList, Trash2, Truck, FileText, Calendar, Filter, ShoppingCart, Package, AlertTriangle, Clock, TrendingUp, PiggyBank, Star, BarChart3, Search, Receipt } from 'lucide-react';
+import { Users, Flame, Trophy, LogOut, ArrowRight, Award, Gift, DollarSign, Settings, ShoppingBag, Menu, X, Check, ShieldAlert, UtensilsCrossed, Plus, Pencil, PackageCheck, PackageX, Archive, ClipboardList, Trash2, Truck, FileText, Calendar, Filter, ShoppingCart, Package, AlertTriangle, Clock, TrendingUp, TrendingDown, PiggyBank, Star, BarChart3, Search, Receipt, ChevronDown } from 'lucide-react';
 import { useNavigate, Link } from 'react-router-dom';
 import { ComposedChart, Area, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, Legend } from 'recharts';
 import { BottomSheet } from './ui/BottomSheet.jsx';
+import NumericInput from './ui/NumericInput';
 import { SectionHeader } from './ui/SectionHeader.jsx';
 import { ErrorBanner } from './ui/ErrorBanner.jsx';
 import Pagination from './ui/Pagination.jsx';
@@ -74,6 +75,9 @@ const AdminDashboard = () => {
     const [insumoForm, setInsumoForm] = useState({ nombre: '', unidad_medida: 'unidad', stock_actual: 0, stock_minimo: 0, activo: true, costo_unitario: 0 });
     const [_editingReceta, setEditingReceta] = useState(null); // null, 'new', or id
     const [recetaForm, setRecetaForm] = useState({ producto_id: '', insumo_id: '', cantidad_por_unidad: 1 });
+    const [editingRecetaInline, setEditingRecetaInline] = useState(null); // id
+    const [inlineRecetaQty, setInlineRecetaQty] = useState('');
+    const [inlineRecetaSaving, setInlineRecetaSaving] = useState(false);
     const [insumoSaving, setInsumoSaving] = useState(false);
     const [recetaSaving, setRecetaSaving] = useState(false);
     const [showAjusteModal, setShowAjusteModal] = useState(null); // insumo object
@@ -95,10 +99,15 @@ const AdminDashboard = () => {
     const [insumoDetalleMovs, setInsumoDetalleMovs] = useState([]);
     const [insumoDetalleLoading, setInsumoDetalleLoading] = useState(false);
 
+    // Fase 2 Bloque 7: Inventario sub-tabs
+    const [inventarioSubTab, setInventarioSubTab] = useState('insumos'); // 'insumos' | 'recetas'
+
     // Compras / Proveedores states
     const [proveedoresList, setProveedoresList] = useState([]);
     const [comprasList, setComprasList] = useState([]);
     const [comprasLoading, setComprasLoading] = useState(false);
+    const [mermasList, setMermasList] = useState([]);
+    const [mermasLoading, setMermasLoading] = useState(false);
     const [editingProveedor, setEditingProveedor] = useState(null); // null, 'new', or id
     const [proveedorForm, setProveedorForm] = useState({ nombre: '', telefono: '', contacto: '', activo: true });
     const [editingCompra, setEditingCompra] = useState(null); // null or 'new'
@@ -130,25 +139,32 @@ const AdminDashboard = () => {
     const PAGE_SIZE = 20;
 
     // Ventas — estado paginado independiente
-    const [ventasPage, setVentasPage]       = useState(0);
+    const [ventasPage, setVentasPage] = useState(0);
     const [ventasPageData, setVentasPageData] = useState([]);
-    const [ventasTotal, setVentasTotal]     = useState(0);
+    const [ventasTotal, setVentasTotal] = useState(0);
     const [ventasLoading, setVentasLoading] = useState(false);
-    const [ventasError, setVentasError]     = useState(null);
+    const [ventasError, setVentasError] = useState(null);
 
     // Caja — estado paginado independiente (movementsList sigue siendo global para KPIs)
-    const [movementsPage, setMovementsPage]       = useState(0);
+    const [movementsPage, setMovementsPage] = useState(0);
     const [movementsPageData, setMovementsPageData] = useState([]);
-    const [movementsTotal, setMovementsTotal]     = useState(0);
+    const [movementsTotal, setMovementsTotal] = useState(0);
     const [movementsLoading, setMovementsLoading] = useState(false);
-    const [movementsError, setMovementsError]     = useState(null);
+    const [movementsError, setMovementsError] = useState(null);
+
+    // Fase 2 Bloque 3: Caja date filter + search
+    const [cajaDateFilter, setCajaDateFilter] = useState('7d'); // 'today' | '7d' | '30d' | 'all'
+    const [cajaSearch, setCajaSearch] = useState('');
+    const [expandedMovementId, setExpandedMovementId] = useState(null);
+    const [expandedMovementSale, setExpandedMovementSale] = useState(null);
+    const [expandedMovementLoading, setExpandedMovementLoading] = useState(false);
 
     // Liquidaciones — estado paginado independiente (liquidacionesList sigue siendo global para KPIs)
-    const [liqPage, setLiqPage]         = useState(0);
+    const [liqPage, setLiqPage] = useState(0);
     const [liqPageData, setLiqPageData] = useState([]);
-    const [liqTotal, setLiqTotal]       = useState(0);
-    const [liqLoading, setLiqLoading]   = useState(false);
-    const [liqError, setLiqError]       = useState(null);
+    const [liqTotal, setLiqTotal] = useState(0);
+    const [liqLoading, setLiqLoading] = useState(false);
+    const [liqError, setLiqError] = useState(null);
 
     // Gastos — estado paginado independiente y variables del formulario
     const [gastosPage, setGastosPage] = useState(0);
@@ -167,6 +183,7 @@ const AdminDashboard = () => {
 
     // Sale cancellation workflow states
     const [anulacionesList, setAnulacionesList] = useState([]);
+    const [showAnulacionesPanel, setShowAnulacionesPanel] = useState(false);
     const [showSolicitarAnulacionModal, setShowSolicitarAnulacionModal] = useState(null); // venta object or null
     const [anulacionMotivo, setAnulacionMotivo] = useState('');
 
@@ -177,11 +194,41 @@ const AdminDashboard = () => {
     const [editingCosto, setEditingCosto] = useState(null);
     // ─────────────────────────────────────────────────────────────────────────
 
+    // B9: Expandable sale detail rows
+    const [expandedSaleId, setExpandedSaleId] = useState(null);
+    const [expandedSaleClients, setExpandedSaleClients] = useState([]); // multi-client names from stamp_logs
+
+    // B12: Internal transfer between payment methods
+    const [showTransferModal, setShowTransferModal] = useState(false);
+    const [transferForm, setTransferForm] = useState({
+        origen: 'EFECTIVO',
+        destino: 'NEQUI',
+        monto: 0,
+        observaciones: ''
+    });
+    const [transferIdempotencyKey, setTransferIdempotencyKey] = useState(crypto.randomUUID());
+
+    useEffect(() => {
+        setTransferIdempotencyKey(crypto.randomUUID());
+    }, [transferForm.origen, transferForm.destino, transferForm.monto]);
+
+    // B2: Expandable caja accounts
+    const [expandedCajaAccount, setExpandedCajaAccount] = useState(null); // null | 'EFECTIVO' | 'NEQUI' | 'BANCOLOMBIA'
+
+    // Fase 2: Alert badge counts (computed from loaded data)
+    const pendingAnulacionesCount = anulacionesList.filter(a => a.estado === 'PENDIENTE' || a.estado === 'APROBACION_1').length;
+    const arqueosConDiferencia = sessionsList.filter(s => s.estado === 'CERRADA' && Math.abs(Number(s.diferencia || 0)) > 0).length;
+    const alertBadges = {
+        ventas: pendingAnulacionesCount,
+        caja: arqueosConDiferencia,
+    };
+    // ─────────────────────────────────────────────────────────────────────────
+
     const fetchDashboardData = async () => {
         try {
+            // Step 1: Get user profile (needed for role-based logic)
             const { data: { session } } = await supabase.auth.getSession();
             if (session?.user) {
-                // Fetch logged-in user profile details
                 const { data: profile } = await supabase
                     .from('perfiles_trabajadores')
                     .select('*')
@@ -190,128 +237,91 @@ const AdminDashboard = () => {
                 setCurrentUserProfile(profile);
             }
 
-            // 1. Get Total Clients
-            const { count: clientsCount } = await supabase
-                .from('clientes')
-                .select('*', { count: 'exact', head: true });
+            const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
-            // 2. Get All Clients for Stamp Calculation
-            const { data: allClients } = await supabase
-                .from('clientes')
-                .select('stamps_count');
+            // Step 2: Run ALL independent queries in parallel
+            const [
+                clientsCountRes,
+                allClientsRes,
+                redemptionsCountRes,
+                recentRes,
+                topClientsRes,
+                stampLogsRes,
+                redemptionLogsRes,
+                salesRes,
+                movementsRes,
+                staffRes,
+                liqsRes,
+                expensesRes,
+                saleMovementsRes,
+                anulacionesRes,
+                costosRes
+            ] = await Promise.all([
+                // 1. Total Clients count
+                supabase.from('clientes').select('*', { count: 'exact', head: true }),
+                // 2. All clients stamps
+                supabase.from('clientes').select('stamps_count'),
+                // 3. Total Redemptions
+                supabase.from('redemptions').select('*', { count: 'exact', head: true }),
+                // 4. Recent Clients
+                supabase.from('clientes').select('*').order('created_at', { ascending: false }).limit(10),
+                // 4b. Top Stamp Clients
+                supabase.from('clientes').select('id, nombre, celular, stamps_count').order('stamps_count', { ascending: false }).limit(10),
+                // 5. Stamp logs (30 days)
+                supabase.from('stamp_logs').select('created_at, clientes(nombre)').gte('created_at', thirtyDaysAgo).order('created_at', { ascending: true }),
+                // 5b. Redemption logs (30 days)
+                supabase.from('redemptions').select('redeemed_at, clientes(nombre)').gte('redeemed_at', thirtyDaysAgo).order('redeemed_at', { ascending: true }),
+                // 6. Sales (global for KPIs)
+                supabase.from('ventas').select('*, perfiles_trabajadores(nombre), clientes(nombre)').order('fecha', { ascending: false }),
+                // 7. Cash Movements (global for KPIs)
+                supabase.from('movimientos_caja').select('*, perfiles_trabajadores(nombre), venta_id').order('fecha', { ascending: false }),
+                // 8. Staff list
+                supabase.from('perfiles_trabajadores').select('*').order('created_at', { ascending: false }),
+                // 9. Liquidaciones
+                supabase.from('liquidaciones').select('*, perfiles_trabajadores(nombre, email, rol, modalidad_pago, tarifa_pago)').order('fecha', { ascending: false }),
+                // 11. Gastos
+                supabase.from('gastos').select('*, categorias_gastos(nombre)').order('fecha', { ascending: false }),
+                // 10. COGS movements
+                supabase.from('movimientos_inventario').select('cantidad, insumos(costo_unitario)').eq('tipo', 'VENTA'),
+                // 12. Anulaciones
+                supabase.from('solicitudes_anulacion_venta').select('*, ventas(total, fecha, metodo_pago), solicitante:perfiles_trabajadores!solicitudes_anulacion_venta_solicitante_id_fkey(nombre), aprobador1:perfiles_trabajadores!solicitudes_anulacion_venta_aprobador_1_id_fkey(nombre), aprobador2:perfiles_trabajadores!solicitudes_anulacion_venta_aprobador_2_id_fkey(nombre)').order('created_at', { ascending: false }),
+                // 13. Costos configuracion
+                supabase.from('costos_configuracion').select('*').order('tipo_costo', { ascending: true })
+            ]);
 
+            // Step 3: Process results
+            const allClients = allClientsRes.data;
             const totalStamps = allClients?.reduce((acc, curr) => acc + (curr.stamps_count || 0), 0) || 0;
             const pendingRewards = allClients?.filter(c => c.stamps_count >= 10).length || 0;
 
-            // 3. Get Total Redemptions
-            const { count: redemptionsCount } = await supabase
-                .from('redemptions')
-                .select('*', { count: 'exact', head: true });
-
             setStats({
-                totalClients: clientsCount || 0,
+                totalClients: clientsCountRes.count || 0,
                 totalStamps,
                 pendingRewards,
-                totalRedemptions: redemptionsCount || 0
+                totalRedemptions: redemptionsCountRes.count || 0
             });
 
-            // 4. Get Recent Clients
-            const { data: recent } = await supabase
-                .from('clientes')
-                .select('*')
-                .order('created_at', { ascending: false })
-                .limit(10);
+            setRecentClients(recentRes.data || []);
+            setTopStampClients(topClientsRes.data || []);
 
-            setRecentClients(recent || []);
-
-            // 4b. Get Top Clients by Stamps
-            const { data: topClients } = await supabase
-                .from('clientes')
-                .select('id, nombre, celular, stamps_count')
-                .order('stamps_count', { ascending: false })
-                .limit(10);
-
-            setTopStampClients(topClients || []);
-
-            // 5. Get Stamp History for Chart (last 30 days)
-            const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-
-            const { data: stampLogs } = await supabase
-                .from('stamp_logs')
-                .select('created_at, clientes(nombre)')
-                .gte('created_at', thirtyDaysAgo)
-                .order('created_at', { ascending: true });
-
-            const { data: redemptionLogs } = await supabase
-                .from('redemptions')
-                .select('redeemed_at, clientes(nombre)')
-                .gte('redeemed_at', thirtyDaysAgo)
-                .order('redeemed_at', { ascending: true });
-
-            const dailyData = processChartData(stampLogs || [], redemptionLogs || []);
+            const dailyData = processChartData(stampLogsRes.data || [], redemptionLogsRes.data || []);
             setChartData(dailyData);
 
-            // 6. Fetch Sales list
-            const { data: sales } = await supabase
-                .from('ventas')
-                .select('*, perfiles_trabajadores(nombre), clientes(nombre)')
-                .order('fecha', { ascending: false });
-            setSalesList(sales || []);
+            setSalesList(salesRes.data || []);
+            setMovementsList(movementsRes.data || []);
+            setStaffList(staffRes.data || []);
+            setLiquidacionesList(liqsRes.data || []);
+            setGastosList(expensesRes.data || []);
 
-            // 7. Fetch Cash Movements list
-            const { data: movements } = await supabase
-                .from('movimientos_caja')
-                .select('*, perfiles_trabajadores(nombre)')
-                .order('fecha', { ascending: false });
-            setMovementsList(movements || []);
-
-            // 8. Fetch Staff list
-            const { data: staff } = await supabase
-                .from('perfiles_trabajadores')
-                .select('*')
-                .order('created_at', { ascending: false });
-            setStaffList(staff || []);
-
-            // 9. Fetch Liquidaciones
-            const { data: liqs } = await supabase
-                .from('liquidaciones')
-                .select('*, perfiles_trabajadores(nombre, email, rol, modalidad_pago, tarifa_pago)')
-                .order('fecha', { ascending: false });
-            setLiquidacionesList(liqs || []);
-
-            // 11. Fetch Gastos List (global for KPIs)
-            const { data: expenses } = await supabase
-                .from('gastos')
-                .select('*, categorias_gastos(nombre)')
-                .order('fecha', { ascending: false });
-            setGastosList(expenses || []);
-
-            // 10. Fetch COGS (Cost of Sales)
-            const { data: saleMovements } = await supabase
-                .from('movimientos_inventario')
-                .select('cantidad, insumos(costo_unitario)')
-                .eq('tipo', 'VENTA');
-
-            const totalCogs = saleMovements?.reduce((sum, m) => {
+            const totalCogs = (saleMovementsRes.data || []).reduce((sum, m) => {
                 const qty = Math.abs(Number(m.cantidad || 0));
                 const unitCost = Number(m.insumos?.costo_unitario || 0);
                 return sum + (qty * unitCost);
-            }, 0) || 0;
+            }, 0);
             setCogsTotal(totalCogs);
 
-            // 12. Fetch anulaciones de venta
-            const { data: anulaciones } = await supabase
-                .from('solicitudes_anulacion_venta')
-                .select('*, ventas(total, fecha, metodo_pago), solicitante:perfiles_trabajadores!solicitudes_anulacion_venta_solicitante_id_fkey(nombre), aprobador1:perfiles_trabajadores!solicitudes_anulacion_venta_aprobador_1_id_fkey(nombre), aprobador2:perfiles_trabajadores!solicitudes_anulacion_venta_aprobador_2_id_fkey(nombre)')
-                .order('created_at', { ascending: false });
-            setAnulacionesList(anulaciones || []);
-
-            // 13. Fetch costos configuracion
-            const { data: costos } = await supabase
-                .from('costos_configuracion')
-                .select('*')
-                .order('tipo_costo', { ascending: true });
-            setCostosList(costos || []);
+            setAnulacionesList(anulacionesRes.data || []);
+            setCostosList(costosRes.data || []);
 
         } catch (error) {
             console.error("Dashboard Error:", error);
@@ -331,11 +341,19 @@ const AdminDashboard = () => {
             const to = from + PAGE_SIZE - 1;
             const { data, count, error } = await supabase
                 .from('ventas')
-                .select('id, fecha, total, metodo_pago, estado, perfiles_trabajadores(nombre), clientes(nombre)', { count: 'exact' })
+                .select('id, fecha, total, metodo_pago, estado, detalles, perfiles_trabajadores(nombre), clientes(nombre)', { count: 'exact' })
                 .order('fecha', { ascending: false })
                 .range(from, to);
             if (error) throw error;
-            setVentasPageData(data || []);
+            
+            // Reconstruct missing financial fields from the detalles JSONB for UI rendering
+            const processedData = (data || []).map(sale => ({
+                ...sale,
+                subtotal: Number(sale.detalles?.subtotal ?? sale.total),
+                descuento: Number(sale.detalles?.discount ?? 0)
+            }));
+            
+            setVentasPageData(processedData);
             setVentasTotal(count || 0);
             setVentasPage(page);
         } catch (err) {
@@ -345,17 +363,37 @@ const AdminDashboard = () => {
         }
     };
 
-    const fetchMovementsPage = async (page = 0) => {
+    const fetchMovementsPage = async (page = 0, dateFilter = cajaDateFilter) => {
         setMovementsLoading(true);
         setMovementsError(null);
         try {
             const from = page * PAGE_SIZE;
             const to = from + PAGE_SIZE - 1;
-            const { data, count, error } = await supabase
+            let query = supabase
                 .from('movimientos_caja')
-                .select('id, fecha, tipo, metodo_pago, descripcion, monto, perfiles_trabajadores(nombre)', { count: 'exact' })
-                .order('fecha', { ascending: false })
-                .range(from, to);
+                .select('id, fecha, tipo, tipo_operacion, metodo_pago, descripcion, monto, venta_id, compra_id, gasto_id, liquidacion_id, perfiles_trabajadores(nombre)', { count: 'exact' })
+                .order('fecha', { ascending: false });
+
+            // Apply date filter
+            const now = new Date();
+            if (dateFilter === 'yesterday') {
+                const yesterday = new Date(now);
+                yesterday.setDate(yesterday.getDate() - 1);
+                const startOfYesterday = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate()).toISOString();
+                const endOfYesterday = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate() + 1).toISOString();
+                query = query.gte('fecha', startOfYesterday).lt('fecha', endOfYesterday);
+            } else if (dateFilter === 'today') {
+                const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+                query = query.gte('fecha', startOfDay);
+            } else if (dateFilter === '7d') {
+                query = query.gte('fecha', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
+            } else if (dateFilter === '30d') {
+                query = query.gte('fecha', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString());
+            }
+            // 'all' = no date filter
+
+            query = query.range(from, to);
+            const { data, count, error } = await query;
             if (error) throw error;
             setMovementsPageData(data || []);
             setMovementsTotal(count || 0);
@@ -364,6 +402,60 @@ const AdminDashboard = () => {
             setMovementsError(err.message || 'Error al cargar movimientos.');
         } finally {
             setMovementsLoading(false);
+        }
+    };
+
+    // Fase 2 Bloque 2: Lazy-load sale detail for a movement
+    // Fase 3: Enhanced to fetch multi-client stamp_logs + mixed payment breakdown + subtotal/descuento from JSONB
+    const loadMovementSaleDetail = async (moveId, ventaId) => {
+        if (expandedMovementId === moveId) {
+            setExpandedMovementId(null);
+            setExpandedMovementSale(null);
+            return;
+        }
+        setExpandedMovementId(moveId);
+        if (!ventaId) {
+            setExpandedMovementSale(null);
+            return;
+        }
+        setExpandedMovementLoading(true);
+        try {
+            // Fetch venta + multi-client stamps + mixed payment movements in parallel
+            const [ventaRes, stampsRes, mixedMovRes] = await Promise.all([
+                supabase
+                    .from('ventas')
+                    .select('id, fecha, total, metodo_pago, estado, detalles, clientes(nombre, celular), perfiles_trabajadores(nombre)')
+                    .eq('id', ventaId)
+                    .single(),
+                supabase
+                    .from('stamp_logs')
+                    .select('client_id, clientes(nombre, celular)')
+                    .eq('venta_id', ventaId)
+                    .eq('tipo', 'VENTA')
+                    .eq('estado', 'ACTIVO'),
+                supabase
+                    .from('movimientos_caja')
+                    .select('metodo_pago, monto')
+                    .eq('venta_id', ventaId)
+            ]);
+
+            if (!ventaRes.error && ventaRes.data) {
+                const sale = ventaRes.data;
+                // Read subtotal/descuento from JSONB detalles
+                sale._subtotal = Number(sale.detalles?.subtotal ?? sale.total);
+                sale._descuento = Number(sale.detalles?.discount ?? 0);
+                // Attach multi-client list from stamp_logs
+                sale._allClients = stampsRes.data?.map(s => s.clientes?.nombre).filter(Boolean) || [];
+                // Attach mixed payment breakdown
+                sale._paymentBreakdown = mixedMovRes.data || [];
+                setExpandedMovementSale(sale);
+            } else {
+                setExpandedMovementSale(null);
+            }
+        } catch {
+            setExpandedMovementSale(null);
+        } finally {
+            setExpandedMovementLoading(false);
         }
     };
 
@@ -441,10 +533,9 @@ const AdminDashboard = () => {
         } else if (activeTab === 'inventario') {
             fetchInventario();
             fetchProductos();
-        } else if (activeTab === 'compras') {
             fetchProveedores();
             fetchCompras();
-            fetchInventario(); // to load insumos list
+            fetchMermas();
         } else if (activeTab === 'ventas') {
             fetchVentas(0); // Fase 6.3 — carga página 0 al entrar al tab
         } else if (activeTab === 'caja') {
@@ -455,6 +546,7 @@ const AdminDashboard = () => {
             fetchCategoriasGastos();
             fetchGastosPage(0);
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeTab]);
 
     const processChartData = (stampLogs, redemptionLogs) => {
@@ -613,7 +705,7 @@ const AdminDashboard = () => {
         }
 
         const newRole = staffMember.rol === 'ADMINISTRADOR' ? 'TRABAJADOR' : 'ADMINISTRADOR';
-        if (!window.confirm(`¿Confirmar cambio de rol de ${staffMember.nombre} a ${newRole}?`)) return;
+        if (!window.confirm(`¿Confirmar cambio de rol de ${staffMember.nombre} de ${staffMember.rol} a ${newRole}?`)) return;
 
         setActionLoading(true);
         try {
@@ -623,11 +715,56 @@ const AdminDashboard = () => {
                 .eq('id', staffMember.id);
 
             if (error) throw error;
-            alert(`Rol actualizado con éxito.`);
-            fetchDashboardData();
+
+            // Update local staffList immediately instead of full dashboard reload
+            setStaffList(prev => prev.map(s =>
+                s.id === staffMember.id ? { ...s, rol: newRole, updated_at: new Date().toISOString() } : s
+            ));
+
+            alert(`✅ Rol de ${staffMember.nombre} actualizado: ${staffMember.rol} → ${newRole}`);
         } catch (err) {
             console.error(err);
             alert('Error al actualizar el perfil.');
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
+    // B12: Transferencia interna entre métodos de pago
+    const handleTransferInterna = async () => {
+        const { origen, destino, monto, observaciones } = transferForm;
+        if (origen === destino) {
+            alert('El método de origen y destino no pueden ser iguales.');
+            return;
+        }
+        if (!monto || monto <= 0) {
+            alert('El monto debe ser mayor a 0.');
+            return;
+        }
+
+        setActionLoading(true);
+        try {
+            // Se utiliza transferIdempotencyKey del estado para conservar el mismo UUID ante reintentos
+            const { data, error } = await supabase.rpc('realizar_transferencia_interna', {
+                p_origen: origen,
+                p_destino: destino,
+                p_monto: monto,
+                p_observaciones: observaciones,
+                p_idempotency_key: transferIdempotencyKey
+            });
+
+            if (error) throw error;
+            if (data && !data.success) throw new Error(data.message);
+
+            alert(`✅ Transferencia registrada: $${monto.toLocaleString()} de ${origen} a ${destino}`);
+            setShowTransferModal(false);
+            setTransferForm({ origen: 'EFECTIVO', destino: 'NEQUI', monto: 0, observaciones: '' });
+            setTransferIdempotencyKey(crypto.randomUUID()); // Explicit reset on absolute success
+            // Refresh movements
+            await fetchDashboardData();
+        } catch (err) {
+            console.error(err);
+            alert('Error al registrar transferencia: ' + err.message);
         } finally {
             setActionLoading(false);
         }
@@ -641,6 +778,12 @@ const AdminDashboard = () => {
     // ---- Dashboard Reports helpers ----
 
     const CHART_COLORS = ['#ff4500', '#d4af37', '#fbbf24', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899'];
+    const PAYMENT_METHOD_COLORS = {
+        'NEQUI': '#9333ea',
+        'BANCOLOMBIA': '#fbbf24',
+        'EFECTIVO': '#10b981',
+        'MIXTO': '#f97316'
+    };
 
     const getDateRange = () => {
         const now = new Date();
@@ -940,7 +1083,7 @@ const AdminDashboard = () => {
 
             const { data: rec, error: recErr } = await supabase
                 .from('producto_insumos')
-                .select('*, productos(nombre), insumos(nombre)');
+                .select('*, productos(nombre), insumos(nombre, unidad_medida)');
             if (recErr) throw recErr;
             setRecetasList(rec || []);
         } catch (err) {
@@ -1052,10 +1195,9 @@ const AdminDashboard = () => {
         if (!insumo || !mermaForm.cantidad || cantidad <= 0) return;
         if (cantidad > Number(insumo.stock_actual)) return;
 
-        // Motivo recomendado pero no bloqueante:
-        // Si el motivo está vacío y el usuario no ha visto el aviso todavía, mostrar aviso
-        if (!mermaForm.motivo.trim() && !mermaForm.advertencia) {
-            setMermaForm(p => ({ ...p, advertencia: true }));
+        // Motivo obligatorio
+        if (!mermaForm.motivo.trim()) {
+            alert('El motivo de la merma es obligatorio.');
             return;
         }
 
@@ -1064,13 +1206,14 @@ const AdminDashboard = () => {
             const { data, error } = await supabase.rpc('registrar_merma_trabajador', {
                 p_insumo_id: insumo.id,
                 p_cantidad: cantidad,
-                p_motivo: mermaForm.motivo.trim() || null,
+                p_motivo: mermaForm.motivo.trim(),
             });
             if (error) throw error;
             if (data && !data.success) throw new Error(data.message);
             setShowMermaModal(null);
             setMermaForm({ cantidad: '', motivo: '', advertencia: false });
             await fetchInventario();
+            await fetchMermas();
         } catch (err) {
             console.error(err);
             alert('Error al registrar merma: ' + err.message);
@@ -1179,6 +1322,26 @@ const AdminDashboard = () => {
         }
     };
 
+    const handleUpdateRecetaQty = async (id) => {
+        const qty = Number(inlineRecetaQty);
+        if (!qty || qty <= 0) {
+            alert('La cantidad debe ser mayor a 0');
+            return;
+        }
+        setInlineRecetaSaving(true);
+        try {
+            const { error } = await supabase.from('producto_insumos').update({ cantidad_por_unidad: qty }).eq('id', id);
+            if (error) throw error;
+            setEditingRecetaInline(null);
+            await fetchInventario();
+        } catch (err) {
+            console.error(err);
+            alert('Error al actualizar la cantidad: ' + err.message);
+        } finally {
+            setInlineRecetaSaving(false);
+        }
+    };
+
     // ---- Compras / Proveedores helpers ----
     const fetchProveedores = async () => {
         try {
@@ -1189,6 +1352,23 @@ const AdminDashboard = () => {
             if (!error && data) setProveedoresList(data);
         } catch (err) {
             console.error(err);
+        }
+    };
+
+    const fetchMermas = async () => {
+        setMermasLoading(true);
+        try {
+            const { data, error } = await supabase
+                .from('movimientos_inventario')
+                .select('*, insumos(nombre, unidad_medida)')
+                .eq('tipo', 'MERMA')
+                .order('created_at', { ascending: false })
+                .limit(50);
+            if (!error && data) setMermasList(data);
+        } catch (err) {
+            console.error(err);
+        } finally {
+            setMermasLoading(false);
         }
     };
 
@@ -1719,19 +1899,18 @@ const AdminDashboard = () => {
     // Socio/Admin: Dashboard → Ventas → Caja → Inventario → Compras → resto.
     // mobileLabel = etiqueta corta para la barra horizontal mobile (NO cambia activeTab ni lógica interna).
     const navigationItems = [
-        { id: 'dashboard',     label: 'Dashboard',               mobileLabel: 'Dashboard',  icon: Flame },
-        { id: 'inventario',    label: 'Inventario',              mobileLabel: 'Inventario', icon: Archive },
-        { id: 'caja',          label: 'Caja y Arqueo',           mobileLabel: 'Caja',       icon: PiggyBank },
-        { id: 'ventas',        label: 'Ventas',                  mobileLabel: 'Ventas',     icon: ShoppingBag },
-        { id: 'clientes',      label: 'Clientes / Fidelización', mobileLabel: 'Clientes',   icon: Users },
-        { id: 'trabajadores',  label: 'Trabajadores',            mobileLabel: 'Staff',      icon: Award },
-        { id: 'rentabilidad',  label: 'Rentabilidad / Finanzas', mobileLabel: 'Finanzas',   icon: TrendingUp },
-        { id: 'gastos',        label: 'Gastos Operativos',       mobileLabel: 'Gastos',     icon: Receipt },
-        { id: 'analitica',     label: 'Analítica (Pareto 80/20)',mobileLabel: 'Analítica',  icon: BarChart3 },
-        { id: 'liquidaciones', label: 'Liquidaciones Staff',     mobileLabel: 'Nómina',     icon: DollarSign },
-        { id: 'productos',     label: 'Productos / Menú',        mobileLabel: 'Productos',  icon: UtensilsCrossed },
-        { id: 'compras',       label: 'Compras',                 mobileLabel: 'Compras',    icon: Truck },
-        { id: 'configuracion', label: 'Configuración',           mobileLabel: 'Config',     icon: Settings, restrictToSocio: true },
+        { id: 'dashboard', label: 'Dashboard', mobileLabel: 'Dashboard', icon: Flame },
+        { id: 'inventario', label: 'Inventario', mobileLabel: 'Inventario', icon: Archive },
+        { id: 'caja', label: 'Caja y Arqueo', mobileLabel: 'Caja', icon: PiggyBank },
+        { id: 'ventas', label: 'Ventas', mobileLabel: 'Ventas', icon: ShoppingBag },
+        { id: 'clientes', label: 'Clientes / Fidelización', mobileLabel: 'Clientes', icon: Users },
+        { id: 'trabajadores', label: 'Trabajadores', mobileLabel: 'Staff', icon: Award },
+        { id: 'rentabilidad', label: 'Rentabilidad / Finanzas', mobileLabel: 'Finanzas', icon: TrendingUp },
+        { id: 'gastos', label: 'Gastos Operativos', mobileLabel: 'Gastos', icon: Receipt },
+        { id: 'analitica', label: 'Analítica (Pareto 80/20)', mobileLabel: 'Analítica', icon: BarChart3 },
+        { id: 'liquidaciones', label: 'Liquidaciones Staff', mobileLabel: 'Nómina', icon: DollarSign },
+        { id: 'productos', label: 'Productos / Menú', mobileLabel: 'Productos', icon: UtensilsCrossed },
+        { id: 'configuracion', label: 'Configuración', mobileLabel: 'Config', icon: Settings, restrictToSocio: true },
     ];
 
     return (
@@ -1782,14 +1961,18 @@ const AdminDashboard = () => {
                                         setActiveTab(item.id);
                                         setMobileMenuOpen(false);
                                     }}
-                                    className={`px-3 py-1.5 rounded-xl text-[11px] font-bold whitespace-nowrap flex items-center gap-1.5 transition-all shrink-0 active:scale-95 ${
-                                        isActive
+                                    className={`px-3 py-1.5 rounded-xl text-[11px] font-bold whitespace-nowrap flex items-center gap-1.5 transition-all shrink-0 active:scale-95 relative ${isActive
                                             ? 'bg-fire text-white shadow-md shadow-fire/20 border border-fire/40'
                                             : 'bg-zinc-900 text-zinc-400 border border-zinc-800 hover:text-zinc-200'
-                                    }`}
+                                        }`}
                                 >
                                     <IconComponent size={13} />
                                     {item.mobileLabel}
+                                    {alertBadges[item.id] > 0 && (
+                                        <span className="absolute -top-1 -right-1 min-w-[16px] h-4 bg-red-500 text-white text-[9px] font-black rounded-full flex items-center justify-center px-1 shadow-lg shadow-red-500/30 animate-pulse">
+                                            {alertBadges[item.id]}
+                                        </span>
+                                    )}
                                 </button>
                             );
                         })}
@@ -1850,13 +2033,18 @@ const AdminDashboard = () => {
                                         setActiveTab(item.id);
                                         setMobileMenuOpen(false);
                                     }}
-                                    className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-bold transition-all ${isActive
-                                            ? 'bg-fire text-white shadow-lg shadow-fire/20 border border-fire/30'
-                                            : 'text-zinc-400 hover:bg-zinc-850 hover:text-white'
+                                    className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-bold transition-all relative ${isActive
+                                        ? 'bg-fire text-white shadow-lg shadow-fire/20 border border-fire/30'
+                                        : 'text-zinc-400 hover:bg-zinc-850 hover:text-white'
                                         }`}
                                 >
                                     <IconComponent size={17} />
-                                    {item.label}
+                                    <span className="flex-1 text-left">{item.label}</span>
+                                    {alertBadges[item.id] > 0 && (
+                                        <span className="min-w-[20px] h-5 bg-red-500 text-white text-[10px] font-black rounded-full flex items-center justify-center px-1.5 shadow-lg shadow-red-500/30">
+                                            {alertBadges[item.id]}
+                                        </span>
+                                    )}
                                 </button>
                             );
                         })}
@@ -1899,6 +2087,42 @@ const AdminDashboard = () => {
                             icon={Flame}
                         />
 
+                        {/* Fase 2: Alertas operativas — Bloques 6 y 9 del newpromt */}
+                        {(pendingAnulacionesCount > 0 || arqueosConDiferencia > 0) && (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                {pendingAnulacionesCount > 0 && (
+                                    <button
+                                        onClick={() => setActiveTab('ventas')}
+                                        className="bg-red-950/30 border border-red-900/40 p-4 rounded-2xl flex items-center gap-3 hover:bg-red-950/50 transition-all text-left group"
+                                    >
+                                        <div className="w-10 h-10 bg-red-500/15 text-red-400 rounded-xl flex items-center justify-center shrink-0">
+                                            <AlertTriangle size={20} />
+                                        </div>
+                                        <div>
+                                            <p className="text-sm font-bold text-red-400">🚨 {pendingAnulacionesCount} solicitud{pendingAnulacionesCount !== 1 ? 'es' : ''} de anulación</p>
+                                            <p className="text-[10px] text-zinc-500 mt-0.5">Requiere{pendingAnulacionesCount !== 1 ? 'n' : ''} aprobación del administrador</p>
+                                        </div>
+                                        <ArrowRight size={14} className="text-zinc-600 group-hover:text-red-400 transition-colors ml-auto shrink-0" />
+                                    </button>
+                                )}
+                                {arqueosConDiferencia > 0 && (
+                                    <button
+                                        onClick={() => setActiveTab('caja')}
+                                        className="bg-yellow-950/30 border border-yellow-900/40 p-4 rounded-2xl flex items-center gap-3 hover:bg-yellow-950/50 transition-all text-left group"
+                                    >
+                                        <div className="w-10 h-10 bg-yellow-500/15 text-yellow-400 rounded-xl flex items-center justify-center shrink-0">
+                                            <PiggyBank size={20} />
+                                        </div>
+                                        <div>
+                                            <p className="text-sm font-bold text-yellow-400">⚠️ {arqueosConDiferencia} arqueo{arqueosConDiferencia !== 1 ? 's' : ''} con diferencia</p>
+                                            <p className="text-[10px] text-zinc-500 mt-0.5">Sesiones cerradas con faltante o sobrante</p>
+                                        </div>
+                                        <ArrowRight size={14} className="text-zinc-600 group-hover:text-yellow-400 transition-colors ml-auto shrink-0" />
+                                    </button>
+                                )}
+                            </div>
+                        )}
+
                         {/* Error banner — solo visible cuando fetchDashboardData falla */}
                         {fetchError && (
                             <ErrorBanner
@@ -1906,6 +2130,73 @@ const AdminDashboard = () => {
                                 onRetry={() => { setFetchError(null); fetchDashboardData(); }}
                             />
                         )}
+
+                        {/* Fase 3 Bloque 20: Actividad Reciente — Feed de auditoría */}
+                        {(() => {
+                            const activityItems = [
+                                ...salesList.slice(0, 8).map(s => ({
+                                    type: 'venta',
+                                    icon: '🧾',
+                                    label: `Venta $${Number(s.total).toLocaleString()} — ${s.clientes?.nombre || 'Anónimo'}`,
+                                    by: s.perfiles_trabajadores?.nombre || 'Sistema',
+                                    date: new Date(s.fecha),
+                                    color: s.estado === 'ANULADA' ? 'text-red-400' : 'text-green-400',
+                                    badge: s.estado === 'ANULADA' ? 'ANULADA' : null,
+                                })),
+                                ...anulacionesList.slice(0, 5).map(a => ({
+                                    type: 'anulacion',
+                                    icon: '⚠️',
+                                    label: `Anulación: $${Number(a.ventas?.total || 0).toLocaleString()} — ${a.motivo?.slice(0, 40) || 'Sin motivo'}`,
+                                    by: a.solicitante?.nombre || 'N/A',
+                                    date: new Date(a.created_at),
+                                    color: a.estado === 'EJECUTADA' ? 'text-red-400' : 'text-yellow-400',
+                                    badge: a.estado,
+                                })),
+                                ...sessionsList.filter(s => s.estado === 'CERRADA' && Math.abs(Number(s.diferencia || 0)) > 0).slice(0, 3).map(s => ({
+                                    type: 'arqueo',
+                                    icon: '💰',
+                                    label: `Arqueo con diferencia: ${Number(s.diferencia) > 0 ? '+' : ''}$${Number(s.diferencia).toLocaleString()}`,
+                                    by: s.perfiles_trabajadores?.nombre || 'N/A',
+                                    date: new Date(s.cerrado_at || s.abierto_at),
+                                    color: 'text-yellow-400',
+                                    badge: 'DIFERENCIA',
+                                })),
+                            ].sort((a, b) => b.date - a.date).slice(0, 10);
+
+                            if (activityItems.length === 0) return null;
+
+                            return (
+                                <div className="bg-zinc-900 border border-zinc-800/60 rounded-2xl overflow-hidden">
+                                    <div className="p-4 border-b border-zinc-800 bg-zinc-950/40 flex items-center gap-2">
+                                        <ClipboardList size={16} className="text-fire" />
+                                        <h3 className="text-sm font-bold uppercase tracking-wider text-zinc-200">Actividad Reciente</h3>
+                                        <span className="text-[10px] text-zinc-500 ml-auto">{activityItems.length} eventos</span>
+                                    </div>
+                                    <div className="divide-y divide-zinc-800/50 max-h-[350px] overflow-y-auto">
+                                        {activityItems.map((item, idx) => (
+                                            <div key={idx} className="px-4 py-3 flex items-start gap-3 hover:bg-zinc-800/20 transition-colors">
+                                                <span className="text-base mt-0.5 shrink-0">{item.icon}</span>
+                                                <div className="min-w-0 flex-1">
+                                                    <p className={`text-xs font-medium ${item.color} truncate`}>{item.label}</p>
+                                                    <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                                                        <span className="text-[10px] text-zinc-500">{item.by}</span>
+                                                        <span className="text-[10px] text-zinc-600">·</span>
+                                                        <span className="text-[10px] text-zinc-500">{item.date.toLocaleString('es-ES', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                                                        {item.badge && (
+                                                            <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${item.badge === 'ANULADA' || item.badge === 'EJECUTADA' ? 'bg-red-500/10 text-red-400' :
+                                                                    item.badge === 'PENDIENTE' ? 'bg-yellow-500/10 text-yellow-400' :
+                                                                        item.badge === 'DIFERENCIA' ? 'bg-yellow-500/10 text-yellow-400' :
+                                                                            'bg-zinc-700 text-zinc-300'
+                                                                }`}>{item.badge}</span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            );
+                        })()}
 
                         {/* Date Filter Bar */}
                         <div className="flex items-center justify-between mb-2">
@@ -1926,8 +2217,8 @@ const AdminDashboard = () => {
                                     key={opt.key}
                                     onClick={() => { setDateRange(opt.key); setCustomStartDate(''); setCustomEndDate(''); }}
                                     className={`px-4 py-2 rounded-lg text-sm font-bold whitespace-nowrap transition-all ${dateRange === opt.key
-                                            ? 'bg-fire text-white shadow-lg shadow-fire/15'
-                                            : 'bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white hover:border-fire/30'
+                                        ? 'bg-fire text-white shadow-lg shadow-fire/15'
+                                        : 'bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white hover:border-fire/30'
                                         }`}
                                 >
                                     {opt.label}
@@ -2105,7 +2396,7 @@ const AdminDashboard = () => {
                                             <ResponsiveContainer width="100%" height="100%">
                                                 <PieChart>
                                                     <Pie data={paymentMethodData} dataKey="value" nameKey="name" cx="50%" cy="45%" innerRadius={40} outerRadius={70} paddingAngle={2} label={false}>
-                                                        {paymentMethodData.map((_, i) => <Cell key={`cell-${i}`} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
+                                                        {paymentMethodData.map((entry, i) => <Cell key={`cell-${i}`} fill={PAYMENT_METHOD_COLORS[entry.name] || CHART_COLORS[i % CHART_COLORS.length]} />)}
                                                     </Pie>
                                                     <Tooltip contentStyle={{ backgroundColor: '#1a1a1a', border: '1px solid #333', fontSize: '11px' }}
                                                         formatter={(value) => [`$${value.toLocaleString()}`, 'Ingresos']} />
@@ -2497,8 +2788,8 @@ const AdminDashboard = () => {
                                                             <td className="p-3 text-zinc-400 font-mono">${Number(sesion.monto_apertura || 0).toLocaleString()}</td>
                                                             <td className="p-3">
                                                                 <span className={`text-[9px] font-bold px-2 py-0.5 rounded ${sesion.estado === 'ABIERTA'
-                                                                        ? 'bg-green-500/10 text-green-400'
-                                                                        : 'bg-zinc-800 text-zinc-500'
+                                                                    ? 'bg-green-500/10 text-green-400'
+                                                                    : 'bg-zinc-800 text-zinc-500'
                                                                     }`}>
                                                                     {sesion.estado}
                                                                 </span>
@@ -2579,100 +2870,6 @@ const AdminDashboard = () => {
                             </div>
                         </div>
 
-                        {/* Side-by-Side Grid: Top 10 Stamp Clients & Recent Clients */}
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-
-                            {/* Top 10 Clientes con Más Sellos */}
-                            <div className="bg-zinc-900 border border-zinc-800/60 rounded-2xl overflow-hidden shadow-xl">
-                                <div className="p-4 border-b border-zinc-850 bg-zinc-950/40 flex items-center justify-between">
-                                    <h3 className="text-sm font-semibold text-white flex items-center gap-2">
-                                        <Trophy size={16} className="text-gold" />
-                                        Top 10 Clientes con Más Sellos
-                                    </h3>
-                                    <span className="text-[10px] text-gold font-bold bg-gold/10 px-2 py-0.5 rounded border border-gold/20">Fidelización Alta</span>
-                                </div>
-                                <div className="overflow-x-auto">
-                                    <table className="w-full text-left border-collapse">
-                                        <thead>
-                                            <tr className="bg-zinc-950/60 border-b border-zinc-800 text-[9px] uppercase font-bold text-zinc-400">
-                                                <th className="p-3">#</th>
-                                                <th className="p-3">Cliente</th>
-                                                <th className="p-3 text-center">Fuegos</th>
-                                                <th className="p-3 text-right">Celular</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-zinc-850 text-xs">
-                                            {topStampClients.length === 0 ? (
-                                                <tr>
-                                                    <td colSpan="4" className="p-6 text-center text-zinc-500">No hay clientes con sellos registrados</td>
-                                                </tr>
-                                            ) : (
-                                                topStampClients.map((client, idx) => (
-                                                    <tr key={client.id} className="hover:bg-zinc-850/20 transition-colors">
-                                                        <td className="p-3 text-zinc-500 font-mono text-[10px]">{idx + 1}</td>
-                                                        <td className="p-3 font-medium text-zinc-200">{client.nombre || 'Sin Nombre'}</td>
-                                                        <td className="p-3 text-center">
-                                                            <span className={`font-bold font-mono ${client.stamps_count >= 10 ? 'text-gold' : 'text-fire'}`}>
-                                                                🔥 {client.stamps_count}
-                                                            </span>
-                                                        </td>
-                                                        <td className="p-3 text-right text-zinc-400 font-mono text-[11px]">{client.celular || '-'}</td>
-                                                    </tr>
-                                                ))
-                                            )}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-
-                            {/* Clientes Recientes */}
-                            <div className="bg-zinc-900 border border-zinc-800/60 rounded-2xl overflow-hidden shadow-xl">
-                                <div className="p-4 border-b border-zinc-850 bg-zinc-950/40 flex items-center justify-between">
-                                    <h3 className="text-sm font-semibold text-white flex items-center gap-2">
-                                        <Users size={16} className="text-fire" />
-                                        Clientes Recientes Registrados
-                                    </h3>
-                                    <span className="text-[10px] text-zinc-400 font-bold bg-zinc-800 px-2 py-0.5 rounded">Últimos 10</span>
-                                </div>
-                                <div className="divide-y divide-zinc-850 max-h-[380px] overflow-y-auto">
-                                    {recentClients.length === 0 ? (
-                                        <div className="p-6 text-center text-zinc-500 text-xs">No hay registros recientes</div>
-                                    ) : (
-                                        recentClients.map(client => (
-                                            <div key={client.id} className="p-3.5 flex items-center justify-between hover:bg-zinc-850/30 transition-colors">
-                                                <div className="flex items-center gap-3">
-                                                    <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs ${client.stamps_count >= 10 ? 'bg-gold text-black' : 'bg-zinc-800 text-zinc-400'}`}>
-                                                        {client.nombre ? client.nombre.charAt(0).toUpperCase() : '?'}
-                                                    </div>
-                                                    <div>
-                                                        <p className="text-xs font-semibold text-zinc-200">{client.nombre || 'Sin Nombre'}</p>
-                                                        <p className="text-[11px] text-zinc-500 font-mono">{client.celular || 'Sin Celular'}</p>
-                                                    </div>
-                                                </div>
-                                                <div className="flex items-center gap-4">
-                                                    {client.stamps_count >= 10 && (
-                                                        <button
-                                                            onClick={() => handleRedeem(client.id, client.stamps_count)}
-                                                            className="flex items-center gap-1 bg-gold text-black px-2 py-1 rounded text-[11px] font-bold hover:bg-yellow-400 transition-colors shadow"
-                                                        >
-                                                            <Award size={12} />
-                                                            Canjear
-                                                        </button>
-                                                    )}
-                                                    <span className={`text-xs font-bold font-mono ${client.stamps_count >= 10 ? 'text-gold' : 'text-fire'}`}>
-                                                        {client.stamps_count} <span className="text-zinc-500 font-normal">Fuegos</span>
-                                                    </span>
-                                                    <Link to={`/admin/client/${client.id}`} className="text-zinc-500 hover:text-white transition-colors">
-                                                        <ArrowRight size={15} />
-                                                    </Link>
-                                                </div>
-                                            </div>
-                                        ))
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-
                         {/* Search Client Interactive Section */}
                         <div className="bg-zinc-900 border border-zinc-800/60 rounded-2xl overflow-hidden shadow-xl space-y-4 p-6">
                             <h2 className="text-md font-serif text-white flex items-center gap-2">
@@ -2738,6 +2935,102 @@ const AdminDashboard = () => {
                                 )}
                             </div>
                         </div>
+
+                        {/* Side-by-Side Grid: Top 10 Stamp Clients & Recent Clients */}
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+
+                            {/* Top 10 Clientes con Más Sellos */}
+                            <div className="bg-zinc-900 border border-zinc-800/60 rounded-2xl overflow-hidden shadow-xl">
+                                <div className="p-4 border-b border-zinc-850 bg-zinc-950/40 flex items-center justify-between">
+                                    <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                                        <Trophy size={16} className="text-gold" />
+                                        Top 10 Clientes con Más Sellos
+                                    </h3>
+                                    <span className="text-[10px] text-gold font-bold bg-gold/10 px-2 py-0.5 rounded border border-gold/20">Fidelización Alta</span>
+                                </div>
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-left border-collapse">
+                                        <thead>
+                                            <tr className="bg-zinc-950/60 border-b border-zinc-800 text-[9px] uppercase font-bold text-zinc-400">
+                                                <th className="p-3">#</th>
+                                                <th className="p-3">Cliente</th>
+                                                <th className="p-3 text-center">Fuegos</th>
+                                                <th className="p-3 text-right">Celular</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-zinc-850 text-xs">
+                                            {topStampClients.length === 0 ? (
+                                                <tr>
+                                                    <td colSpan="4" className="p-6 text-center text-zinc-500">No hay clientes con sellos registrados</td>
+                                                </tr>
+                                            ) : (
+                                                topStampClients.map((client, idx) => (
+                                                    <tr key={client.id} className="hover:bg-zinc-850/20 transition-colors">
+                                                        <td className="p-3 text-zinc-500 font-mono text-[10px]">{idx + 1}</td>
+                                                        <td className="p-3 font-medium text-zinc-200">{client.nombre || 'Sin Nombre'}</td>
+                                                        <td className="p-3 text-center">
+                                                            <span className={`font-bold font-mono ${client.stamps_count >= 10 ? 'text-gold' : 'text-fire'}`}>
+                                                                {client.stamps_count}
+                                                            </span>
+                                                        </td>
+                                                        <td className="p-3 text-right text-zinc-400 font-mono text-[11px]">{client.celular || '-'}</td>
+                                                    </tr>
+                                                ))
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            {/* Clientes Recientes */}
+                            <div className="bg-zinc-900 border border-zinc-800/60 rounded-2xl overflow-hidden shadow-xl">
+                                <div className="p-4 border-b border-zinc-850 bg-zinc-950/40 flex items-center justify-between">
+                                    <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                                        <Users size={16} className="text-fire" />
+                                        Clientes Recientes Registrados
+                                    </h3>
+                                    <span className="text-[10px] text-zinc-400 font-bold bg-zinc-800 px-2 py-0.5 rounded">Últimos 10</span>
+                                </div>
+                                <div className="divide-y divide-zinc-850 max-h-[380px] overflow-y-auto">
+                                    {recentClients.length === 0 ? (
+                                        <div className="p-6 text-center text-zinc-500 text-xs">No hay registros recientes</div>
+                                    ) : (
+                                        recentClients.map(client => (
+                                            <div key={client.id} className="p-3.5 flex items-center justify-between hover:bg-zinc-850/30 transition-colors">
+                                                <div className="flex items-center gap-3">
+                                                    <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs ${client.stamps_count >= 10 ? 'bg-gold text-black' : 'bg-zinc-800 text-zinc-400'}`}>
+                                                        {client.nombre ? client.nombre.charAt(0).toUpperCase() : '?'}
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-zinc-200">{client.nombre || 'Sin Nombre'}</p>
+                                                        <p className="text-[11px] text-zinc-500 font-mono">{client.celular || 'Sin Celular'}</p>
+                                                    </div>
+                                                </div>
+                                                <div className="flex items-center gap-4">
+                                                    {client.stamps_count >= 10 && (
+                                                        <button
+                                                            onClick={() => handleRedeem(client.id, client.stamps_count)}
+                                                            className="flex items-center gap-1 bg-gold text-black px-2 py-1 rounded text-[11px] font-bold hover:bg-yellow-400 transition-colors shadow"
+                                                        >
+                                                            <Award size={12} />
+                                                            Canjear
+                                                        </button>
+                                                    )}
+                                                    <span className={`text-xs font-bold font-mono ${client.stamps_count >= 10 ? 'text-gold' : 'text-fire'}`}>
+                                                        {client.stamps_count} <span className="text-zinc-500 font-normal">Fuegos</span>
+                                                    </span>
+                                                    <Link to={`/admin/client/${client.id}`} className="text-zinc-500 hover:text-white transition-colors">
+                                                        <ArrowRight size={15} />
+                                                    </Link>
+                                                </div>
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+
                     </div>
                 )}
 
@@ -2753,6 +3046,82 @@ const AdminDashboard = () => {
                                 </Link>
                             }
                         />
+
+                        {/* Solicitudes de Anulación Panel */}
+                        {anulacionesList.length > 0 && (
+                            <div className="bg-zinc-900 border border-zinc-800/60 rounded-2xl overflow-hidden">
+                                <div 
+                                    className="p-4 border-b border-zinc-800 bg-zinc-950/40 flex justify-between items-center cursor-pointer hover:bg-zinc-900/80 transition-colors"
+                                    onClick={() => setShowAnulacionesPanel(!showAnulacionesPanel)}
+                                >
+                                    <h3 className="text-sm font-bold uppercase tracking-wider text-red-400">🚨 Solicitudes de Anulación de Venta</h3>
+                                    <ChevronDown size={20} className={`text-zinc-500 transition-transform ${showAnulacionesPanel ? 'rotate-180' : ''}`} />
+                                </div>
+                                {showAnulacionesPanel && (
+                                    <div className="divide-y divide-zinc-800">
+                                        {anulacionesList.map(sol => (
+                                            <div key={sol.id} className="p-4 space-y-2">
+                                                <div className="flex items-center justify-between gap-2 flex-wrap">
+                                                    <div className="space-y-1">
+                                                        <p className="text-xs text-zinc-400">Venta: ${Number(sol.ventas?.total || 0).toLocaleString()} — {sol.ventas?.fecha ? new Date(sol.ventas.fecha).toLocaleString('es-ES') : ''}</p>
+                                                        <p className="text-xs text-zinc-300"><strong>Motivo:</strong> {sol.motivo}</p>
+                                                        <p className="text-[10px] text-zinc-500">Solicitó: {sol.solicitante?.nombre || 'N/A'} · {new Date(sol.created_at).toLocaleString('es-ES')}</p>
+                                                        {sol.aprobador1?.nombre && <p className="text-[10px] text-green-400">✓ Aprobación 1: {sol.aprobador1.nombre}</p>}
+                                                        {sol.aprobador2?.nombre && <p className="text-[10px] text-green-400">✓ Aprobación 2: {sol.aprobador2.nombre}</p>}
+                                                    </div>
+                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                        <span className={`text-[10px] font-bold uppercase px-2 py-1 rounded ${sol.estado === 'PENDIENTE' ? 'bg-yellow-500/10 text-yellow-400' :
+                                                                sol.estado === 'APROBACION_1' ? 'bg-blue-500/10 text-blue-400' :
+                                                                    sol.estado === 'APROBACION_2' ? 'bg-purple-500/10 text-purple-400' :
+                                                                        sol.estado === 'EJECUTADA' ? 'bg-green-500/10 text-green-400' :
+                                                                            sol.estado === 'RECHAZADA' ? 'bg-red-500/10 text-red-400' : 'bg-zinc-700 text-zinc-300'
+                                                            }`}>{sol.estado}</span>
+                                                        {currentUserProfile?.es_socio && sol.estado !== 'EJECUTADA' && sol.estado !== 'RECHAZADA' && (
+                                                            <>
+                                                                {sol.estado === 'PENDIENTE' && (
+                                                                    <>
+                                                                        {sol.solicitante_id === currentUserProfile?.id ? (
+                                                                            <span className="text-[10px] font-bold text-yellow-500/70 border border-yellow-500/20 px-3 py-1 rounded">
+                                                                                Requiere otro aprobador
+                                                                            </span>
+                                                                        ) : (
+                                                                            <button onClick={() => handleAprobarAnulacion(sol.id)} disabled={actionLoading} className="text-[10px] font-bold bg-green-500/10 text-green-400 hover:bg-green-500/20 px-3 py-1 rounded transition-colors">Aprobar (1ª)</button>
+                                                                        )}
+                                                                    </>
+                                                                )}
+                                                                {sol.estado === 'APROBACION_1' && (
+                                                                    <>
+                                                                        {(sol.solicitante_id === currentUserProfile?.id || sol.aprobador_1_id === currentUserProfile?.id) ? (
+                                                                            <span className="text-[10px] font-bold text-blue-400/70 border border-blue-500/20 px-3 py-1 rounded">
+                                                                                Esperando 2º aprobador
+                                                                            </span>
+                                                                        ) : (
+                                                                            <button onClick={() => handleAprobarAnulacion(sol.id)} disabled={actionLoading} className="text-[10px] font-bold bg-green-500/10 text-green-400 hover:bg-green-500/20 px-3 py-1 rounded transition-colors">Aprobar y Ejecutar (2ª)</button>
+                                                                        )}
+                                                                    </>
+                                                                )}
+                                                                {sol.estado === 'APROBACION_2' && (
+                                                                    <>
+                                                                        {sol.solicitante_id === currentUserProfile?.id ? (
+                                                                            <span className="text-[10px] font-bold text-yellow-500/70 border border-yellow-500/20 px-3 py-1 rounded">
+                                                                                Requiere otro aprobador
+                                                                            </span>
+                                                                        ) : (
+                                                                            <button onClick={() => handleEjecutarAnulacion(sol.id)} disabled={actionLoading} className="text-[10px] font-bold bg-fire/20 text-fire hover:bg-fire/30 px-3 py-1 rounded transition-colors">Ejecutar Anulación</button>
+                                                                        )}
+                                                                    </>
+                                                                )}
+                                                                <button onClick={() => handleRechazarAnulacion(sol.id)} disabled={actionLoading} className="text-[10px] font-bold bg-red-500/10 text-red-400 hover:bg-red-500/20 px-3 py-1 rounded transition-colors">Rechazar</button>
+                                                            </>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        )}
 
                         {/* Sales List */}
                         <div className="bg-zinc-900 border border-zinc-800/60 rounded-2xl overflow-hidden">
@@ -2799,33 +3168,83 @@ const AdminDashboard = () => {
                                         </thead>
                                         <tbody className="divide-y divide-zinc-800 text-sm">
                                             {ventasPageData.map(sale => (
-                                                <tr key={sale.id} className="hover:bg-zinc-800/20 transition-colors">
-                                                    <td className="p-4 text-xs text-zinc-400">
-                                                        {new Date(sale.fecha).toLocaleString('es-ES')}
-                                                    </td>
-                                                    <td className="p-4 font-medium text-zinc-200">
-                                                        {sale.clientes?.nombre || <span className="text-zinc-600 italic text-xs">Venta Anónima</span>}
-                                                    </td>
-                                                    <td className="p-4 text-xs text-zinc-400">
-                                                        {sale.perfiles_trabajadores?.nombre || 'Desconocido'}
-                                                    </td>
-                                                    <td className="p-4">
-                                                        <span className="text-[10px] font-bold uppercase bg-zinc-800 text-zinc-300 px-2 py-0.5 rounded">
-                                                            {sale.metodo_pago}
-                                                        </span>
-                                                    </td>
-                                                    <td className="p-4 text-right font-bold text-zinc-100">
-                                                        ${Number(sale.total).toLocaleString()}
-                                                    </td>
-                                                    <td className="p-4">
-                                                        <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${sale.estado === 'COMPLETADA' ? 'bg-green-500/10 text-green-400' : sale.estado === 'ANULADA' ? 'bg-red-500/10 text-red-400' : 'bg-zinc-700 text-zinc-300'}`}>{sale.estado || 'COMPLETADA'}</span>
-                                                    </td>
-                                                    <td className="p-4">
-                                                        {sale.estado === 'COMPLETADA' && (
-                                                            <button onClick={() => setShowSolicitarAnulacionModal(sale)} className="text-[10px] font-bold uppercase bg-red-500/10 text-red-400 hover:bg-red-500/20 px-2 py-1 rounded transition-colors">{currentUserProfile?.es_socio ? 'Anular' : 'Solicitar Anulaci\u00f3n'}</button>
-                                                        )}
-                                                    </td>
-                                                </tr>
+                                                <React.Fragment key={sale.id}>
+                                                    <tr className="hover:bg-zinc-800/20 transition-colors cursor-pointer" onClick={async () => {
+                                                        const newId = expandedSaleId === sale.id ? null : sale.id;
+                                                        setExpandedSaleId(newId);
+                                                        if (newId) {
+                                                            const { data: stamps } = await supabase.from('stamp_logs').select('clientes(nombre)').eq('venta_id', newId).eq('tipo', 'VENTA').eq('estado', 'ACTIVO');
+                                                            setExpandedSaleClients(stamps?.map(s => s.clientes?.nombre).filter(Boolean) || []);
+                                                        } else { setExpandedSaleClients([]); }
+                                                    }}>
+                                                        <td className="p-4 text-xs text-zinc-400">
+                                                            {new Date(sale.fecha).toLocaleString('es-ES')}
+                                                        </td>
+                                                        <td className="p-4 font-medium text-zinc-200">
+                                                            {sale.clientes?.nombre || <span className="text-zinc-600 italic text-xs">Venta Anónima</span>}
+                                                        </td>
+                                                        <td className="p-4 text-xs text-zinc-400">
+                                                            {sale.perfiles_trabajadores?.nombre || 'Desconocido'}
+                                                        </td>
+                                                        <td className="p-4">
+                                                            <span className="text-[10px] font-bold uppercase bg-zinc-800 text-zinc-300 px-2 py-0.5 rounded">
+                                                                {sale.metodo_pago}
+                                                            </span>
+                                                        </td>
+                                                        <td className="p-4 text-right font-bold text-zinc-100">
+                                                            ${Number(sale.total).toLocaleString()}
+                                                        </td>
+                                                        <td className="p-4">
+                                                            <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${sale.estado === 'COMPLETADA' ? 'bg-green-500/10 text-green-400' : sale.estado === 'ANULADA' ? 'bg-red-500/10 text-red-400' : 'bg-zinc-700 text-zinc-300'}`}>{sale.estado || 'COMPLETADA'}</span>
+                                                        </td>
+                                                        <td className="p-4" onClick={e => e.stopPropagation()}>
+                                                            {sale.estado === 'COMPLETADA' && (
+                                                                <button onClick={() => setShowSolicitarAnulacionModal(sale)} className="text-[10px] font-bold uppercase bg-red-500/10 text-red-400 hover:bg-red-500/20 px-2 py-1 rounded transition-colors">{currentUserProfile?.es_socio ? 'Anular' : 'Solicitar Anulaci\u00f3n'}</button>
+                                                            )}
+                                                        </td>
+                                                    </tr>
+                                                    {expandedSaleId === sale.id && (
+                                                        <tr>
+                                                            <td colSpan={7} className="bg-zinc-950/60 p-4 border-l-2 border-fire/30">
+                                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                                                                    {/* Products */}
+                                                                    <div className="space-y-2">
+                                                                        <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Productos</p>
+                                                                        {(sale.detalles?.items || []).length > 0 ? (
+                                                                            <div className="space-y-1">
+                                                                                {(sale.detalles.items).map((item, idx) => (
+                                                                                    <div key={idx} className="flex justify-between items-center py-1 border-b border-zinc-800/50 last:border-0">
+                                                                                        <span className="text-zinc-300">
+                                                                                            {item.nombre || item.name} × {item.cantidad || item.quantity || 1}
+                                                                                        </span>
+                                                                                        <span className="text-zinc-200 font-bold">
+                                                                                            ${(Number(item.precio || item.price || 0) * Number(item.cantidad || item.quantity || 1)).toLocaleString()}
+                                                                                        </span>
+                                                                                    </div>
+                                                                                ))}
+                                                                            </div>
+                                                                        ) : (
+                                                                            <p className="text-zinc-600 italic">Sin detalles disponibles</p>
+                                                                        )}
+                                                                    </div>
+                                                                    {/* Summary */}
+                                                                    <div className="space-y-2">
+                                                                        <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Resumen</p>
+                                                                        <div className="space-y-1">
+                                                                            <div className="flex justify-between"><span className="text-zinc-500">Subtotal</span><span className="text-zinc-300">${Number(sale.subtotal || sale.total).toLocaleString()}</span></div>
+                                                                            {Number(sale.descuento || 0) > 0 && (
+                                                                                <div className="flex justify-between"><span className="text-zinc-500">Descuento</span><span className="text-red-400">-${Number(sale.descuento).toLocaleString()}</span></div>
+                                                                            )}
+                                                                            <div className="flex justify-between font-bold border-t border-zinc-800 pt-1"><span className="text-zinc-300">Total</span><span className="text-fire">${Number(sale.total).toLocaleString()}</span></div>
+                                                                            <div className="flex justify-between mt-2"><span className="text-zinc-500">Método</span><span className="text-zinc-300 font-bold">{sale.metodo_pago}</span></div>
+                                                                            <div className="flex justify-between items-start"><span className="text-zinc-500">Cliente(s)</span><div className="text-right"><p className="text-zinc-300">{sale.clientes?.nombre || 'No registrado'}</p>{expandedSaleClients.filter(n => n !== sale.clientes?.nombre).map((name, i) => (<p key={i} className="text-zinc-400 text-[10px]">+ {name}</p>))}</div></div>
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                    )}
+                                                </React.Fragment>
                                             ))}
                                         </tbody>
                                     </table>
@@ -2838,7 +3257,17 @@ const AdminDashboard = () => {
                                     {ventasPageData.map(sale => (
                                         <div key={sale.id} className="p-4 space-y-1.5">
                                             {/* Nivel 1 — primario */}
-                                            <div className="flex items-center justify-between gap-2">
+                                            <div
+                                                className="flex items-center justify-between gap-2 cursor-pointer"
+                                                onClick={async () => {
+                                                    const newId = expandedSaleId === sale.id ? null : sale.id;
+                                                    setExpandedSaleId(newId);
+                                                    if (newId) {
+                                                        const { data: stamps } = await supabase.from('stamp_logs').select('clientes(nombre)').eq('venta_id', newId).eq('tipo', 'VENTA').eq('estado', 'ACTIVO');
+                                                        setExpandedSaleClients(stamps?.map(s => s.clientes?.nombre).filter(Boolean) || []);
+                                                    } else { setExpandedSaleClients([]); }
+                                                }}
+                                            >
                                                 <span className="text-xs text-zinc-400">
                                                     {new Date(sale.fecha).toLocaleString('es-ES', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
                                                 </span>
@@ -2847,10 +3276,18 @@ const AdminDashboard = () => {
                                                 </span>
                                             </div>
                                             {/* Nivel 2 — secundario */}
-                                            <div className="flex items-center gap-2 flex-wrap">
+                                            <div className="flex items-center gap-2 flex-wrap" onClick={async () => {
+                                                const newId = expandedSaleId === sale.id ? null : sale.id;
+                                                setExpandedSaleId(newId);
+                                                if (newId) {
+                                                    const { data: stamps } = await supabase.from('stamp_logs').select('clientes(nombre)').eq('venta_id', newId).eq('tipo', 'VENTA').eq('estado', 'ACTIVO');
+                                                    setExpandedSaleClients(stamps?.map(s => s.clientes?.nombre).filter(Boolean) || []);
+                                                } else { setExpandedSaleClients([]); }
+                                            }}>
                                                 <span className="text-[10px] font-bold uppercase bg-zinc-800 text-zinc-300 px-2 py-0.5 rounded">
                                                     {sale.metodo_pago}
                                                 </span>
+                                                <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${sale.estado === 'COMPLETADA' ? 'bg-green-500/10 text-green-400' : sale.estado === 'ANULADA' ? 'bg-red-500/10 text-red-400' : 'bg-zinc-700 text-zinc-300'}`}>{sale.estado || 'COMPLETADA'}</span>
                                                 <span className="text-xs text-zinc-400">
                                                     {sale.clientes?.nombre || <span className="italic text-zinc-600">Anónimo</span>}
                                                 </span>
@@ -2858,6 +3295,41 @@ const AdminDashboard = () => {
                                                     · {sale.perfiles_trabajadores?.nombre || 'Desconocido'}
                                                 </span>
                                             </div>
+                                            {/* Nivel 3 — detalle expandible + anulación (Bloque 8 + 9 mobile) */}
+                                            {expandedSaleId === sale.id && (
+                                                <div className="mt-2 bg-zinc-950/60 border border-zinc-800/50 rounded-xl p-3 space-y-3 animate-fadeIn">
+                                                    {/* Productos */}
+                                                    {(sale.detalles?.items || []).length > 0 && (
+                                                        <div className="space-y-1">
+                                                            <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Productos</p>
+                                                            {sale.detalles.items.map((item, idx) => (
+                                                                <div key={idx} className="flex justify-between text-xs">
+                                                                    <span className="text-zinc-300">{item.nombre || item.name} × {item.cantidad || item.quantity || 1}</span>
+                                                                    <span className="text-zinc-200 font-bold">${(Number(item.precio || item.price || 0) * Number(item.cantidad || item.quantity || 1)).toLocaleString()}</span>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                    {/* Resumen */}
+                                                    <div className="space-y-1 text-xs">
+                                                        <div className="flex justify-between items-start"><span className="text-zinc-500">Cliente(s)</span><div className="text-right"><p className="text-zinc-300">{sale.clientes?.nombre || 'No registrado'}</p>{expandedSaleClients.filter(n => n !== sale.clientes?.nombre).map((name, i) => (<p key={i} className="text-zinc-400 text-[10px]">+ {name}</p>))}</div></div>
+                                                        <div className="flex justify-between"><span className="text-zinc-500">Subtotal</span><span className="text-zinc-300">${Number(sale.subtotal || sale.total).toLocaleString()}</span></div>
+                                                        {Number(sale.descuento || 0) > 0 && (
+                                                            <div className="flex justify-between"><span className="text-zinc-500">Descuento</span><span className="text-red-400">-${Number(sale.descuento).toLocaleString()}</span></div>
+                                                        )}
+                                                        <div className="flex justify-between font-bold border-t border-zinc-800 pt-1"><span className="text-zinc-300">Total</span><span className="text-fire">${Number(sale.total).toLocaleString()}</span></div>
+                                                    </div>
+                                                    {/* Botón anulación mobile */}
+                                                    {sale.estado === 'COMPLETADA' && (
+                                                        <button
+                                                            onClick={() => setShowSolicitarAnulacionModal(sale)}
+                                                            className="w-full text-[11px] font-bold uppercase bg-red-500/10 text-red-400 hover:bg-red-500/20 px-3 py-2.5 rounded-xl transition-colors mt-1"
+                                                        >
+                                                            {currentUserProfile?.es_socio ? '🗑 Anular Venta' : '📋 Solicitar Anulación'}
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            )}
                                         </div>
                                     ))}
                                 </div>
@@ -2875,106 +3347,178 @@ const AdminDashboard = () => {
                                 />
                             )}
                         </div>
-
-                        {/* Solicitudes de Anulación Panel */}
-                        {anulacionesList.length > 0 && (
-                            <div className="bg-zinc-900 border border-zinc-800/60 rounded-2xl overflow-hidden">
-                                <div className="p-4 border-b border-zinc-800 bg-zinc-950/40">
-                                    <h3 className="text-sm font-bold uppercase tracking-wider text-red-400">🚨 Solicitudes de Anulación de Venta</h3>
-                                </div>
-                                <div className="divide-y divide-zinc-800">
-                                    {anulacionesList.map(sol => (
-                                        <div key={sol.id} className="p-4 space-y-2">
-                                            <div className="flex items-center justify-between gap-2 flex-wrap">
-                                                <div className="space-y-1">
-                                                    <p className="text-xs text-zinc-400">Venta: ${Number(sol.ventas?.total || 0).toLocaleString()} — {sol.ventas?.fecha ? new Date(sol.ventas.fecha).toLocaleString('es-ES') : ''}</p>
-                                                    <p className="text-xs text-zinc-300"><strong>Motivo:</strong> {sol.motivo}</p>
-                                                    <p className="text-[10px] text-zinc-500">Solicitó: {sol.solicitante?.nombre || 'N/A'} · {new Date(sol.created_at).toLocaleString('es-ES')}</p>
-                                                    {sol.aprobador1?.nombre && <p className="text-[10px] text-green-400">✓ Aprobación 1: {sol.aprobador1.nombre}</p>}
-                                                    {sol.aprobador2?.nombre && <p className="text-[10px] text-green-400">✓ Aprobación 2: {sol.aprobador2.nombre}</p>}
-                                                </div>
-                                                <div className="flex items-center gap-2 flex-wrap">
-                                                    <span className={`text-[10px] font-bold uppercase px-2 py-1 rounded ${
-                                                        sol.estado === 'PENDIENTE' ? 'bg-yellow-500/10 text-yellow-400' :
-                                                        sol.estado === 'APROBACION_1' ? 'bg-blue-500/10 text-blue-400' :
-                                                        sol.estado === 'APROBACION_2' ? 'bg-purple-500/10 text-purple-400' :
-                                                        sol.estado === 'EJECUTADA' ? 'bg-green-500/10 text-green-400' :
-                                                        sol.estado === 'RECHAZADA' ? 'bg-red-500/10 text-red-400' : 'bg-zinc-700 text-zinc-300'
-                                                    }`}>{sol.estado}</span>
-                                                    {currentUserProfile?.es_socio && sol.estado !== 'EJECUTADA' && sol.estado !== 'RECHAZADA' && (
-                                                        <>
-                                                            {(sol.estado === 'PENDIENTE' || sol.estado === 'APROBACION_1') && (
-                                                                <button onClick={() => handleAprobarAnulacion(sol.id)} disabled={actionLoading} className="text-[10px] font-bold bg-green-500/10 text-green-400 hover:bg-green-500/20 px-3 py-1 rounded transition-colors">Aprobar y Ejecutar</button>
-                                                            )}
-                                                            {sol.estado === 'APROBACION_2' && (
-                                                                <button onClick={() => handleEjecutarAnulacion(sol.id)} disabled={actionLoading} className="text-[10px] font-bold bg-fire/20 text-fire hover:bg-fire/30 px-3 py-1 rounded transition-colors">Ejecutar Anulación</button>
-                                                            )}
-                                                            <button onClick={() => handleRechazarAnulacion(sol.id)} disabled={actionLoading} className="text-[10px] font-bold bg-red-500/10 text-red-400 hover:bg-red-500/20 px-3 py-1 rounded transition-colors">Rechazar</button>
-                                                        </>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
                     </div>
                 )}
 
 
                 {activeTab === 'caja' && (
                     <div className="space-y-6">
-                        <SectionHeader
-                            title="Arqueo y Caja"
-                            subtitle="Seguimiento de movimientos financieros y balance de caja por cuenta oficial"
-                            icon={PiggyBank}
-                        />
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                            <SectionHeader
+                                title="Arqueo y Caja"
+                                subtitle="Seguimiento de movimientos financieros y balance de caja por cuenta oficial"
+                                icon={PiggyBank}
+                            />
+                            <button
+                                onClick={() => setShowTransferModal(true)}
+                                className="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-4 py-2.5 rounded-xl text-xs font-bold border border-zinc-700 transition-all flex items-center gap-2"
+                            >
+                                🔀 Transferencia Interna
+                            </button>
+                        </div>
 
                         {/* Financial Accounts Breakdown (Tesorería) */}
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-                            <div className="bg-zinc-900 border border-green-500/30 p-5 rounded-2xl flex items-center justify-between shadow-lg">
-                                <div>
-                                    <p className="text-green-400 text-[10px] uppercase tracking-widest font-bold">💵 Cuenta Efectivo</p>
-                                    <h3 className="text-2xl font-bold text-white mt-1">
-                                        ${(movementsList.filter(m => m.metodo_pago === 'EFECTIVO' && m.tipo === 'INGRESO').reduce((sum, m) => sum + Number(m.monto || 0), 0) - movementsList.filter(m => m.metodo_pago === 'EFECTIVO' && m.tipo === 'EGRESO').reduce((sum, m) => sum + Number(m.monto || 0), 0)).toLocaleString()}
-                                    </h3>
-                                    <span className="text-[10px] text-zinc-500 mt-1 block">Fondo de caja físico</span>
-                                </div>
-                                <div className="w-10 h-10 bg-green-500/10 text-green-400 rounded-xl flex items-center justify-center font-bold">
-                                    EF
-                                </div>
-                            </div>
+                            {/* B2: Clickeable account cards with expandable movements */}
+                            {[
+                                { key: 'EFECTIVO', label: '💵 Cuenta Efectivo', desc: 'Fondo de caja físico', abbr: 'EF', borderColor: 'border-green-500/30', textColor: 'text-green-400', bgIcon: 'bg-green-500/10', activeBorder: 'border-green-500' },
+                                { key: 'NEQUI', label: '📱 Cuenta Nequi', desc: 'Transferencias bancarias Nequi', abbr: 'NQ', borderColor: 'border-pink-500/30', textColor: 'text-pink-400', bgIcon: 'bg-pink-500/10', activeBorder: 'border-pink-500' },
+                                { key: 'BANCOLOMBIA', label: '🏦 Cuenta Bancolombia', desc: 'Transferencias QR Bancolombia', abbr: 'BC', borderColor: 'border-yellow-500/30', textColor: 'text-yellow-400', bgIcon: 'bg-yellow-500/10', activeBorder: 'border-yellow-500' }
+                            ].map(acct => {
+                                const ingresos = movementsList.filter(m => m.metodo_pago === acct.key && m.tipo === 'INGRESO').reduce((sum, m) => sum + Number(m.monto || 0), 0);
+                                const egresos = movementsList.filter(m => m.metodo_pago === acct.key && m.tipo === 'EGRESO').reduce((sum, m) => sum + Number(m.monto || 0), 0);
+                                const saldo = ingresos - egresos;
+                                const isExpanded = expandedCajaAccount === acct.key;
+                                const accountMovements = movementsList.filter(m => m.metodo_pago === acct.key);
 
-                            <div className="bg-zinc-900 border border-pink-500/30 p-5 rounded-2xl flex items-center justify-between shadow-lg">
-                                <div>
-                                    <p className="text-pink-400 text-[10px] uppercase tracking-widest font-bold">📱 Cuenta Nequi</p>
-                                    <h3 className="text-2xl font-bold text-white mt-1">
-                                        ${movementsList.filter(m => m.metodo_pago === 'NEQUI' && m.tipo === 'INGRESO').reduce((sum, m) => sum + Number(m.monto || 0), 0).toLocaleString()}
-                                    </h3>
-                                    <span className="text-[10px] text-zinc-500 mt-1 block">Transferencias bancarias Nequi</span>
-                                </div>
-                                <div className="w-10 h-10 bg-pink-500/10 text-pink-400 rounded-xl flex items-center justify-center font-bold">
-                                    NQ
-                                </div>
-                            </div>
+                                return (
+                                    <div key={acct.key} className="space-y-0">
+                                        <div
+                                            onClick={() => setExpandedCajaAccount(isExpanded ? null : acct.key)}
+                                            className={`bg-zinc-900 border ${isExpanded ? acct.activeBorder : acct.borderColor} p-5 rounded-2xl flex items-center justify-between shadow-lg cursor-pointer hover:bg-zinc-800/50 transition-all ${isExpanded ? 'rounded-b-none' : ''}`}
+                                        >
+                                            <div>
+                                                <p className={`${acct.textColor} text-[10px] uppercase tracking-widest font-bold`}>{acct.label}</p>
+                                                <h3 className="text-2xl font-bold text-white mt-1">${saldo.toLocaleString()}</h3>
+                                                <span className="text-[10px] text-zinc-500 mt-1 block">{acct.desc} · {accountMovements.length} movimientos</span>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                <div className={`w-10 h-10 ${acct.bgIcon} ${acct.textColor} rounded-xl flex items-center justify-center font-bold`}>
+                                                    {acct.abbr}
+                                                </div>
+                                                <ChevronDown size={16} className={`text-zinc-500 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                                            </div>
+                                        </div>
 
-                            <div className="bg-zinc-900 border border-yellow-500/30 p-5 rounded-2xl flex items-center justify-between shadow-lg">
-                                <div>
-                                    <p className="text-yellow-400 text-[10px] uppercase tracking-widest font-bold">🏦 Cuenta Bancolombia</p>
-                                    <h3 className="text-2xl font-bold text-white mt-1">
-                                        ${movementsList.filter(m => m.metodo_pago === 'BANCOLOMBIA' && m.tipo === 'INGRESO').reduce((sum, m) => sum + Number(m.monto || 0), 0).toLocaleString()}
-                                    </h3>
-                                    <span className="text-[10px] text-zinc-500 mt-1 block">Transferencias QR Bancolombia</span>
-                                </div>
-                                <div className="w-10 h-10 bg-yellow-500/10 text-yellow-400 rounded-xl flex items-center justify-center font-bold">
-                                    BC
-                                </div>
-                            </div>
+                                        {/* Expanded: filtered movements */}
+                                        {isExpanded && (
+                                            <div className="bg-zinc-950/60 border border-t-0 border-zinc-800/60 rounded-b-2xl divide-y divide-zinc-800/50 max-h-[400px] overflow-y-auto">
+                                                {accountMovements.length === 0 ? (
+                                                    <div className="py-8 text-center text-zinc-600 text-xs">Sin movimientos</div>
+                                                ) : accountMovements.slice(0, 50).map(move => (
+                                                    <div key={move.id} className="space-y-0">
+                                                        <div
+                                                            className={`p-3 flex items-center justify-between gap-3 ${move.venta_id ? 'cursor-pointer hover:bg-zinc-900/60' : ''}`}
+                                                            onClick={() => { if (move.venta_id) loadMovementSaleDetail(move.id, move.venta_id); }}
+                                                        >
+                                                            <div className="min-w-0 flex-1">
+                                                                <div className="flex items-center gap-2 flex-wrap">
+                                                                    <span className={`text-[9px] font-bold px-2 py-0.5 rounded ${move.tipo === 'INGRESO' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>{move.tipo}</span>
+                                                                    {move.tipo_operacion === 'TRANSFERENCIA_INTERNA' && (
+                                                                        <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-blue-500/10 text-blue-400">TRANSF.</span>
+                                                                    )}
+                                                                    {move.venta_id && (
+                                                                        <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-purple-500/10 text-purple-400 flex items-center gap-1">
+                                                                            🧾 Venta {expandedMovementId === move.id ? '▲' : '▼'}
+                                                                        </span>
+                                                                    )}
+                                                                    <span className="text-[10px] text-zinc-500">{new Date(move.fecha).toLocaleString('es-ES', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                                                                </div>
+                                                                <p className="text-xs text-zinc-400 mt-0.5 truncate">{move.descripcion || 'Sin descripción'}</p>
+                                                                <p className="text-[10px] text-zinc-600 mt-0.5">{move.perfiles_trabajadores?.nombre || 'Sistema'}</p>
+                                                            </div>
+                                                            <span className={`font-bold text-sm whitespace-nowrap ${move.tipo === 'INGRESO' ? 'text-green-400' : 'text-red-400'}`}>
+                                                                {move.tipo === 'INGRESO' ? '+' : '-'}${Number(move.monto).toLocaleString()}
+                                                            </span>
+                                                        </div>
+                                                        {/* Inline sale detail when this movement is expanded */}
+                                                        {expandedMovementId === move.id && (
+                                                            <div className="px-3 pb-3">
+                                                                <div className="bg-zinc-900/80 border border-zinc-800/40 rounded-xl p-3 text-xs space-y-2">
+                                                                    {expandedMovementLoading ? (
+                                                                        <div className="text-zinc-500 text-xs flex items-center gap-2"><svg className="animate-spin w-4 h-4 text-fire" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" /></svg> Cargando detalle...</div>
+                                                                    ) : expandedMovementSale ? (
+                                                                        <>
+                                                                            {(expandedMovementSale.detalles?.items || []).length > 0 && (
+                                                                                <div className="space-y-1">
+                                                                                    <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Productos</p>
+                                                                                    {expandedMovementSale.detalles.items.map((item, idx) => (
+                                                                                        <div key={idx} className="flex justify-between py-0.5">
+                                                                                            <span className="text-zinc-300">{item.nombre || item.name} × {item.cantidad || item.quantity || 1}</span>
+                                                                                            <span className="text-zinc-200 font-bold">${(Number(item.precio || item.price || 0) * Number(item.cantidad || item.quantity || 1)).toLocaleString()}</span>
+                                                                                        </div>
+                                                                                    ))}
+                                                                                </div>
+                                                                            )}
+                                                                            <div className="space-y-1">
+                                                                                <div className="flex justify-between items-start"><span className="text-zinc-500">Cliente(s)</span><div className="text-right"><span className="text-zinc-300">{expandedMovementSale.clientes?.nombre || 'No registrado'}</span>{expandedMovementSale._allClients?.filter(n => n !== expandedMovementSale.clientes?.nombre).map((name, i) => (<p key={i} className="text-zinc-400 text-[10px]">+ {name}</p>))}</div></div>
+                                                                                {Number(expandedMovementSale._descuento || 0) > 0 && (
+                                                                                    <div className="flex justify-between"><span className="text-zinc-500">Descuento</span><span className="text-red-400">-${Number(expandedMovementSale._descuento).toLocaleString()}</span></div>
+                                                                                )}
+                                                                                <div className="flex justify-between font-bold border-t border-zinc-800 pt-1"><span className="text-zinc-300">Total</span><span className="text-fire">${Number(expandedMovementSale.total).toLocaleString()}</span></div>
+                                                                                {expandedMovementSale.metodo_pago === 'MIXTO' && expandedMovementSale._paymentBreakdown?.length > 0 && (
+                                                                                    <div className="mt-1 space-y-0.5">
+                                                                                        {expandedMovementSale._paymentBreakdown.map((pb, i) => (
+                                                                                            <div key={i} className="flex justify-between text-[10px]"><span className="text-zinc-500">{pb.metodo_pago}</span><span className="text-zinc-300">${Number(pb.monto).toLocaleString()}</span></div>
+                                                                                        ))}
+                                                                                    </div>
+                                                                                )}
+                                                                            </div>
+                                                                        </>
+                                                                    ) : (
+                                                                        <p className="text-zinc-500">No se pudo cargar el detalle</p>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                                {accountMovements.length > 50 && (
+                                                    <div className="py-3 text-center text-zinc-600 text-[10px]">Mostrando los primeros 50 de {accountMovements.length} movimientos</div>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })}
                         </div>
 
-                        {/* Movements List — paginado Fase 6.3 */}
+                        {/* Movements List — paginado Fase 6.3 + Fase 2 Bloque 3 filtros */}
                         <div className="bg-zinc-900 border border-zinc-800/60 rounded-2xl overflow-hidden">
+
+                            {/* Fase 2: Date filter bar + search */}
+                            <div className="p-4 border-b border-zinc-800 flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
+                                <div className="flex gap-1.5 overflow-x-auto">
+                                    {[
+                                        { key: 'today', label: 'Hoy' },
+                                        { key: 'yesterday', label: 'Ayer' },
+                                        { key: '7d', label: '7 días' },
+                                        { key: '30d', label: '30 días' },
+                                        { key: 'all', label: 'Todos' },
+                                    ].map(opt => (
+                                        <button
+                                            key={opt.key}
+                                            onClick={() => { setCajaDateFilter(opt.key); fetchMovementsPage(0, opt.key); }}
+                                            className={`px-3 py-1.5 rounded-lg text-[11px] font-bold whitespace-nowrap transition-all ${cajaDateFilter === opt.key
+                                                    ? 'bg-fire text-white shadow shadow-fire/15'
+                                                    : 'bg-zinc-800 text-zinc-400 hover:text-white'
+                                                }`}
+                                        >
+                                            {opt.label}
+                                        </button>
+                                    ))}
+                                </div>
+                                <div className="relative">
+                                    <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
+                                    <input
+                                        type="text"
+                                        placeholder="Buscar movimiento..."
+                                        className="w-full sm:w-56 bg-zinc-950 border border-zinc-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white placeholder:text-zinc-600 focus:border-zinc-600 outline-none"
+                                        value={cajaSearch}
+                                        onChange={e => setCajaSearch(e.target.value)}
+                                    />
+                                </div>
+                            </div>
 
                             {/* Loading */}
                             {movementsLoading && (
@@ -2997,85 +3541,216 @@ const AdminDashboard = () => {
                             {/* Empty */}
                             {!movementsLoading && !movementsError && movementsPageData.length === 0 && (
                                 <div className="py-16 text-center text-zinc-500 text-sm">
-                                    No se registran movimientos de caja
+                                    No se registran movimientos de caja en este período
                                 </div>
                             )}
 
                             {/* Desktop table */}
-                            {!movementsLoading && !movementsError && movementsPageData.length > 0 && (
-                                <div className="hidden md:block overflow-x-auto">
-                                    <table className="w-full text-left border-collapse">
-                                        <thead>
-                                            <tr className="bg-zinc-950/40 border-b border-zinc-800 text-[10px] uppercase font-bold text-zinc-400 tracking-wider">
-                                                <th className="p-4">Fecha</th>
-                                                <th className="p-4">Tipo</th>
-                                                <th className="p-4">Cuenta / Método</th>
-                                                <th className="p-4">Descripción</th>
-                                                <th className="p-4">Registrado por</th>
-                                                <th className="p-4 text-right">Monto</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-zinc-800 text-sm">
-                                            {movementsPageData.map(move => (
-                                                <tr key={move.id} className="hover:bg-zinc-800/20 transition-colors">
-                                                    <td className="p-4 text-xs text-zinc-400">
-                                                        {new Date(move.fecha).toLocaleString('es-ES')}
-                                                    </td>
-                                                    <td className="p-4">
-                                                        <span className={`text-[9px] font-bold px-2 py-0.5 rounded ${move.tipo === 'INGRESO' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
-                                                            {move.tipo}
-                                                        </span>
-                                                    </td>
-                                                    <td className="p-4 text-xs font-bold text-zinc-300">
-                                                        {move.metodo_pago}
-                                                    </td>
-                                                    <td className="p-4 text-zinc-300 text-xs">
-                                                        {move.descripcion}
-                                                    </td>
-                                                    <td className="p-4 text-xs text-zinc-400">
-                                                        {move.perfiles_trabajadores?.nombre || 'Desconocido'}
-                                                    </td>
-                                                    <td className={`p-4 text-right font-bold ${move.tipo === 'INGRESO' ? 'text-green-400' : 'text-red-400'}`}>
-                                                        ${Number(move.monto).toLocaleString()}
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            )}
-
-                            {/* Mobile cards */}
-                            {!movementsLoading && !movementsError && movementsPageData.length > 0 && (
-                                <div className="md:hidden divide-y divide-zinc-800">
-                                    {movementsPageData.map(move => (
-                                        <div key={move.id} className="p-4 space-y-1.5">
-                                            {/* Nivel 1 */}
-                                            <div className="flex items-center justify-between gap-2">
-                                                <div className="flex items-center gap-2">
-                                                    <span className={`text-[9px] font-bold px-2 py-0.5 rounded ${move.tipo === 'INGRESO' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
-                                                        {move.tipo}
-                                                    </span>
-                                                    <span className="text-xs text-zinc-400">
-                                                        {new Date(move.fecha).toLocaleString('es-ES', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
-                                                    </span>
-                                                </div>
-                                                <span className={`font-bold text-base ${move.tipo === 'INGRESO' ? 'text-green-400' : 'text-red-400'}`}>
-                                                    {move.tipo === 'INGRESO' ? '+' : '-'}${Number(move.monto).toLocaleString()}
-                                                </span>
-                                            </div>
-                                            {/* Nivel 2 */}
-                                            <div className="flex items-center gap-2 flex-wrap">
-                                                <span className="text-xs font-bold text-zinc-300">{move.metodo_pago}</span>
-                                                {move.descripcion && (
-                                                    <span className="text-xs text-zinc-500">{move.descripcion}</span>
-                                                )}
-                                                <span className="text-[10px] text-zinc-600">· {move.perfiles_trabajadores?.nombre || 'Desconocido'}</span>
-                                            </div>
+                            {!movementsLoading && !movementsError && (() => {
+                                const q = cajaSearch.toLowerCase().trim();
+                                const filtered = q
+                                    ? movementsPageData.filter(m => (m.descripcion || '').toLowerCase().includes(q) || (m.metodo_pago || '').toLowerCase().includes(q) || (m.perfiles_trabajadores?.nombre || '').toLowerCase().includes(q))
+                                    : movementsPageData;
+                                if (filtered.length === 0 && movementsPageData.length > 0) {
+                                    return <div className="py-8 text-center text-zinc-600 text-xs">Sin resultados para &ldquo;{cajaSearch}&rdquo;</div>;
+                                }
+                                if (filtered.length === 0) return null;
+                                return (
+                                    <>
+                                        <div className="hidden md:block overflow-x-auto">
+                                            <table className="w-full text-left border-collapse">
+                                                <thead>
+                                                    <tr className="bg-zinc-950/40 border-b border-zinc-800 text-[10px] uppercase font-bold text-zinc-400 tracking-wider">
+                                                        <th className="p-4">Fecha</th>
+                                                        <th className="p-4">Tipo</th>
+                                                        <th className="p-4">Cuenta / Método</th>
+                                                        <th className="p-4">Descripción</th>
+                                                        <th className="p-4">Registrado por</th>
+                                                        <th className="p-4 text-right">Monto</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-zinc-800 text-sm">
+                                                    {filtered.map(move => (
+                                                        <React.Fragment key={move.id}>
+                                                            <tr
+                                                                className="hover:bg-zinc-800/20 transition-colors cursor-pointer"
+                                                                onClick={() => loadMovementSaleDetail(move.id, move.venta_id)}
+                                                            >
+                                                                <td className="p-4 text-xs text-zinc-400">
+                                                                    {new Date(move.fecha).toLocaleString('es-ES')}
+                                                                </td>
+                                                                <td className="p-4">
+                                                                    <span className={`text-[9px] font-bold px-2 py-0.5 rounded ${move.tipo === 'INGRESO' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
+                                                                        {move.tipo}
+                                                                    </span>
+                                                                    {move.tipo_operacion === 'TRANSFERENCIA_INTERNA' && (
+                                                                        <span className="ml-1 text-[9px] font-bold px-2 py-0.5 rounded bg-blue-500/10 text-blue-400">TRANSF.</span>
+                                                                    )}
+                                                                </td>
+                                                                <td className="p-4 text-xs font-bold text-zinc-300">
+                                                                    {move.metodo_pago}
+                                                                </td>
+                                                                <td className="p-4 text-zinc-300 text-xs">
+                                                                    {move.descripcion}
+                                                                    {move.venta_id && (
+                                                                        <span className="ml-2 inline-flex text-[9px] font-bold px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 items-center gap-1 align-middle">
+                                                                            Ver Venta ↱
+                                                                        </span>
+                                                                    )}
+                                                                </td>
+                                                                <td className="p-4 text-xs text-zinc-400">
+                                                                    {move.perfiles_trabajadores?.nombre || 'Desconocido'}
+                                                                </td>
+                                                                <td className={`p-4 text-right font-bold ${move.tipo === 'INGRESO' ? 'text-green-400' : 'text-red-400'}`}>
+                                                                    ${Number(move.monto).toLocaleString()}
+                                                                </td>
+                                                            </tr>
+                                                            {/* Fase 2 Bloque 2: Expanded sale detail */}
+                                                            {expandedMovementId === move.id && (
+                                                                <tr>
+                                                                    <td colSpan={6} className="bg-zinc-950/60 p-4 border-l-2 border-fire/30">
+                                                                        {expandedMovementLoading ? (
+                                                                            <div className="text-zinc-500 text-xs flex items-center gap-2"><svg className="animate-spin w-4 h-4 text-fire" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" /></svg> Cargando detalle...</div>
+                                                                        ) : expandedMovementSale ? (
+                                                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                                                                                <div className="space-y-2">
+                                                                                    <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Productos</p>
+                                                                                    {(expandedMovementSale.detalles?.items || []).length > 0 ? (
+                                                                                        expandedMovementSale.detalles.items.map((item, idx) => (
+                                                                                            <div key={idx} className="flex justify-between py-1 border-b border-zinc-800/50 last:border-0">
+                                                                                                <span className="text-zinc-300">{item.nombre || item.name} × {item.cantidad || item.quantity || 1}</span>
+                                                                                                <span className="text-zinc-200 font-bold">${(Number(item.precio || item.price || 0) * Number(item.cantidad || item.quantity || 1)).toLocaleString()}</span>
+                                                                                            </div>
+                                                                                        ))
+                                                                                    ) : <p className="text-zinc-600 italic">Sin detalles disponibles</p>}
+                                                                                </div>
+                                                                                <div className="space-y-2">
+                                                                                    <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Resumen de Venta</p>
+                                                                                    <div className="space-y-1">
+                                                                                        <div className="flex justify-between"><span className="text-zinc-500">Cliente</span><span className="text-zinc-300">{expandedMovementSale.clientes?.nombre || 'No registrado'}</span></div>
+                                                                                        {/* Multi-client: show all associated clients from stamp_logs */}
+                                                                                        {expandedMovementSale._allClients?.length > 1 && (
+                                                                                            <div className="flex justify-between items-start"><span className="text-zinc-500">Clientes extra</span><span className="text-zinc-300 text-right">{expandedMovementSale._allClients.filter(n => n !== expandedMovementSale.clientes?.nombre).join(', ')}</span></div>
+                                                                                        )}
+                                                                                        <div className="flex justify-between"><span className="text-zinc-500">Subtotal</span><span className="text-zinc-300">${Number(expandedMovementSale._subtotal ?? expandedMovementSale.total).toLocaleString()}</span></div>
+                                                                                        {Number(expandedMovementSale._descuento || 0) > 0 && (
+                                                                                            <div className="flex justify-between"><span className="text-zinc-500">Descuento</span><span className="text-red-400">-${Number(expandedMovementSale._descuento).toLocaleString()}</span></div>
+                                                                                        )}
+                                                                                        <div className="flex justify-between font-bold border-t border-zinc-800 pt-1"><span className="text-zinc-300">Total</span><span className="text-fire">${Number(expandedMovementSale.total).toLocaleString()}</span></div>
+                                                                                        <div className="flex justify-between mt-2"><span className="text-zinc-500">Método</span><span className="text-zinc-300 font-bold">{expandedMovementSale.metodo_pago}</span></div>
+                                                                                        {/* Mixed payment breakdown */}
+                                                                                        {expandedMovementSale.metodo_pago === 'MIXTO' && expandedMovementSale._paymentBreakdown?.length > 0 && (
+                                                                                            <div className="mt-1 space-y-0.5">
+                                                                                                {expandedMovementSale._paymentBreakdown.map((pb, i) => (
+                                                                                                    <div key={i} className="flex justify-between text-[10px]"><span className="text-zinc-500">{pb.metodo_pago}</span><span className="text-zinc-300">${Number(pb.monto).toLocaleString()}</span></div>
+                                                                                                ))}
+                                                                                            </div>
+                                                                                        )}
+                                                                                        <div className="flex justify-between"><span className="text-zinc-500">Estado</span><span className={expandedMovementSale.estado === 'ANULADA' ? 'text-red-400 font-bold' : 'text-green-400'}>{expandedMovementSale.estado || 'COMPLETADA'}</span></div>
+                                                                                    </div>
+                                                                                    <button
+                                                                                        onClick={() => { setActiveTab('ventas'); setExpandedSaleId(expandedMovementSale.id); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                                                                                        className="mt-2 text-[10px] font-bold px-3 py-1.5 rounded bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 cursor-pointer"
+                                                                                    >
+                                                                                        Ver venta completa ↱
+                                                                                    </button>
+                                                                                </div>
+                                                                            </div>
+                                                                        ) : (
+                                                                            <p className="text-zinc-500 text-xs">{move.venta_id ? 'No se pudo cargar el detalle de esta venta' : 'Este movimiento no está vinculado a una venta'}</p>
+                                                                        )}
+                                                                    </td>
+                                                                </tr>
+                                                            )}
+                                                        </React.Fragment>
+                                                    ))}
+                                                </tbody>
+                                            </table>
                                         </div>
-                                    ))}
-                                </div>
-                            )}
+
+                                        {/* Mobile cards */}
+                                        <div className="md:hidden divide-y divide-zinc-800">
+                                            {filtered.map(move => (
+                                                <div key={move.id} className="p-4 space-y-1.5">
+                                                    {/* Nivel 1 */}
+                                                    <div
+                                                        className="flex items-center justify-between gap-2 cursor-pointer"
+                                                        onClick={() => loadMovementSaleDetail(move.id, move.venta_id)}
+                                                    >
+                                                        <div className="flex items-center gap-2">
+                                                            <span className={`text-[9px] font-bold px-2 py-0.5 rounded ${move.tipo === 'INGRESO' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
+                                                                {move.tipo}
+                                                            </span>
+                                                            {move.tipo_operacion === 'TRANSFERENCIA_INTERNA' && (
+                                                                <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-blue-500/10 text-blue-400">TRANSF.</span>
+                                                            )}
+                                                            <span className="text-xs text-zinc-400">
+                                                                {new Date(move.fecha).toLocaleString('es-ES', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                                                            </span>
+                                                        </div>
+                                                        <span className={`font-bold text-base ${move.tipo === 'INGRESO' ? 'text-green-400' : 'text-red-400'}`}>
+                                                            {move.tipo === 'INGRESO' ? '+' : '-'}${Number(move.monto).toLocaleString()}
+                                                        </span>
+                                                    </div>
+                                                    {/* Nivel 2 */}
+                                                    <div className="flex items-center gap-2 flex-wrap" onClick={() => loadMovementSaleDetail(move.id, move.venta_id)}>
+                                                        <span className="text-xs font-bold text-zinc-300">{move.metodo_pago}</span>
+                                                        {move.descripcion && (
+                                                            <span className="text-xs text-zinc-500 truncate max-w-[200px]">{move.descripcion}</span>
+                                                        )}
+                                                        <span className="text-[10px] text-zinc-600">· {move.perfiles_trabajadores?.nombre || 'Desconocido'}</span>
+                                                        {move.venta_id && (
+                                                            <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-blue-500/10 text-blue-400">Venta ↱</span>
+                                                        )}
+                                                    </div>
+                                                    {/* Fase 2: Expanded sale detail mobile */}
+                                                    {expandedMovementId === move.id && (
+                                                        <div className="mt-2 bg-zinc-950/60 border border-zinc-800/50 rounded-xl p-3 space-y-2 animate-fadeIn">
+                                                            {expandedMovementLoading ? (
+                                                                <div className="text-zinc-500 text-xs flex items-center gap-2"><svg className="animate-spin w-4 h-4 text-fire" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" /></svg> Cargando...</div>
+                                                            ) : expandedMovementSale ? (
+                                                                <div className="space-y-2 text-xs">
+                                                                    <p className="text-zinc-400">👤 {expandedMovementSale.clientes?.nombre || 'Sin cliente'}
+                                                                        {expandedMovementSale._allClients?.length > 1 && (
+                                                                            <span className="text-zinc-500"> + {expandedMovementSale._allClients.length - 1} más</span>
+                                                                        )}
+                                                                    </p>
+                                                                    {(expandedMovementSale.detalles?.items || []).map((item, idx) => (
+                                                                        <div key={idx} className="flex justify-between">
+                                                                            <span className="text-zinc-300">{item.nombre || item.name} × {item.cantidad || item.quantity || 1}</span>
+                                                                            <span className="text-zinc-200 font-bold">${(Number(item.precio || item.price || 0) * Number(item.cantidad || item.quantity || 1)).toLocaleString()}</span>
+                                                                        </div>
+                                                                    ))}
+                                                                    {Number(expandedMovementSale._descuento || 0) > 0 && (
+                                                                        <div className="flex justify-between"><span className="text-zinc-500">Descuento</span><span className="text-red-400">-${Number(expandedMovementSale._descuento).toLocaleString()}</span></div>
+                                                                    )}
+                                                                    {/* Mixed payment breakdown (mobile) */}
+                                                                    {expandedMovementSale.metodo_pago === 'MIXTO' && expandedMovementSale._paymentBreakdown?.length > 0 && (
+                                                                        <div className="space-y-0.5 border-t border-zinc-800 pt-1">
+                                                                            {expandedMovementSale._paymentBreakdown.map((pb, i) => (
+                                                                                <div key={i} className="flex justify-between text-[10px]"><span className="text-zinc-500">{pb.metodo_pago}</span><span className="text-zinc-300">${Number(pb.monto).toLocaleString()}</span></div>
+                                                                            ))}
+                                                                        </div>
+                                                                    )}
+                                                                    <div className="flex justify-between font-bold border-t border-zinc-800 pt-1"><span className="text-zinc-300">Total</span><span className="text-fire">${Number(expandedMovementSale.total).toLocaleString()}</span></div>
+                                                                    <button
+                                                                        onClick={() => { setActiveTab('ventas'); setExpandedSaleId(expandedMovementSale.id); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                                                                        className="w-full mt-1 text-[10px] font-bold px-3 py-2 rounded-lg bg-blue-500/10 text-blue-400 hover:bg-blue-500/20"
+                                                                    >
+                                                                        Ver venta completa ↱
+                                                                    </button>
+                                                                </div>
+                                                            ) : (
+                                                                <p className="text-zinc-500 text-xs">{move.venta_id ? 'No se pudo cargar' : 'Movimiento sin venta vinculada'}</p>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </>
+                                );
+                            })()}
 
                             {/* Pagination */}
                             {!movementsLoading && !movementsError && (
@@ -3224,7 +3899,7 @@ const AdminDashboard = () => {
                                     // Normalize costs to monthly
                                     const toMonthly = (monto, periodicidad) => {
                                         const n = Number(monto || 0);
-                                        switch(periodicidad) {
+                                        switch (periodicidad) {
                                             case 'DIARIO': return n * 30;
                                             case 'SEMANAL': return n * 4.33;
                                             case 'QUINCENAL': return n * 2;
@@ -3719,11 +4394,10 @@ const AdminDashboard = () => {
                                                         ${Number(liq.monto_calculado).toLocaleString()}
                                                     </td>
                                                     <td className="p-4 text-center">
-                                                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${
-                                                            liq.estado === 'PAGADO' ? 'bg-green-500/10 text-green-400' :
-                                                            liq.estado === 'ANULADO' ? 'bg-red-500/10 text-red-400' :
-                                                            'bg-yellow-500/10 text-yellow-400'
-                                                        }`}>
+                                                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${liq.estado === 'PAGADO' ? 'bg-green-500/10 text-green-400' :
+                                                                liq.estado === 'ANULADO' ? 'bg-red-500/10 text-red-400' :
+                                                                    'bg-yellow-500/10 text-yellow-400'
+                                                            }`}>
                                                             {liq.estado}
                                                         </span>
                                                     </td>
@@ -3789,11 +4463,10 @@ const AdminDashboard = () => {
                                             </div>
                                             {/* Nivel 2 — estado */}
                                             <div>
-                                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${
-                                                    liq.estado === 'PAGADO' ? 'bg-green-500/10 text-green-400' :
-                                                    liq.estado === 'ANULADO' ? 'bg-red-500/10 text-red-400' :
-                                                    'bg-yellow-500/10 text-yellow-400'
-                                                }`}>
+                                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${liq.estado === 'PAGADO' ? 'bg-green-500/10 text-green-400' :
+                                                        liq.estado === 'ANULADO' ? 'bg-red-500/10 text-red-400' :
+                                                            'bg-yellow-500/10 text-yellow-400'
+                                                    }`}>
                                                     {liq.estado === 'PAGADO' ? '✓ Pagado' : liq.estado === 'ANULADO' ? '✕ Anulado' : '⏳ Pendiente'}
                                                 </span>
                                                 {liq.estado === 'PAGADO' && liq.cuenta_pago && (
@@ -3968,11 +4641,10 @@ const AdminDashboard = () => {
                                                         {g.perfiles_trabajadores?.nombre || 'Sistema'}
                                                     </td>
                                                     <td className="p-4">
-                                                        <span className={`inline-block px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                                                            g.estado === 'REGISTRADO' 
-                                                                ? 'bg-green-500/10 text-green-400 border border-green-500/25' 
+                                                        <span className={`inline-block px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${g.estado === 'REGISTRADO'
+                                                                ? 'bg-green-500/10 text-green-400 border border-green-500/25'
                                                                 : 'bg-zinc-800 text-zinc-500 border border-zinc-700/50'
-                                                        }`}>
+                                                            }`}>
                                                             {g.estado}
                                                         </span>
                                                     </td>
@@ -4219,20 +4891,18 @@ const AdminDashboard = () => {
                                     </div>
                                     <div>
                                         <label className="text-[10px] uppercase tracking-wider font-bold text-zinc-400 block mb-1">Precio ($) *</label>
-                                        <input
-                                            type="number"
+                                        <NumericInput
                                             className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white focus:border-fire outline-none"
                                             value={productoForm.precio}
-                                            onChange={e => setProductoForm(p => ({ ...p, precio: e.target.value }))}
+                                            onChange={val => setProductoForm(p => ({ ...p, precio: val }))}
                                         />
                                     </div>
                                     <div>
                                         <label className="text-[10px] uppercase tracking-wider font-bold text-zinc-400 block mb-1">Orden (número)</label>
-                                        <input
-                                            type="number"
+                                        <NumericInput
                                             className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white focus:border-fire outline-none"
                                             value={productoForm.orden}
-                                            onChange={e => setProductoForm(p => ({ ...p, orden: e.target.value }))}
+                                            onChange={val => setProductoForm(p => ({ ...p, orden: val }))}
                                         />
                                     </div>
                                     <div className="sm:col-span-2">
@@ -4342,8 +5012,8 @@ const AdminDashboard = () => {
                                                     <button
                                                         onClick={() => handleToggleProductoActivo(prod)}
                                                         className={`flex-1 flex items-center justify-center gap-1 py-1.5 rounded text-[11px] font-bold transition-all ${prod.activo
-                                                                ? 'bg-red-950/20 hover:bg-red-950/40 text-red-400'
-                                                                : 'bg-green-950/20 hover:bg-green-950/40 text-green-400'
+                                                            ? 'bg-red-950/20 hover:bg-red-950/40 text-red-400'
+                                                            : 'bg-green-950/20 hover:bg-green-950/40 text-green-400'
                                                             }`}
                                                     >
                                                         {prod.activo ? <PackageX size={12} /> : <PackageCheck size={12} />}
@@ -4364,8 +5034,8 @@ const AdminDashboard = () => {
                         {/* Title */}
                         <div className="flex flex-wrap justify-between items-center gap-4">
                             <div>
-                                <h1 className="text-3xl font-serif text-white">Inventario de Insumos</h1>
-                                <p className="text-zinc-500 text-sm mt-1">Control de materias primas, mermas y recetas de productos</p>
+                                <h1 className="text-3xl font-serif text-white">Inventario</h1>
+                                <p className="text-zinc-500 text-sm mt-1">Control de insumos, stock y fichas técnicas de productos</p>
                             </div>
                             {currentUserProfile?.es_socio && (
                                 <div className="flex flex-wrap gap-2">
@@ -4390,371 +5060,450 @@ const AdminDashboard = () => {
                             )}
                         </div>
 
-                        {/* Worker notice — merma habilitada */}
-                        {!currentUserProfile?.es_socio && (
-                            <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-xl flex items-center gap-3 text-zinc-400 text-xs">
-                                <ShieldAlert className="text-yellow-500 shrink-0" size={16} />
-                                <span>Puedes registrar <strong>mermas</strong> directamente. Para entradas, correcciones o cambios de inventario contacta al administrador.</span>
-                            </div>
-                        )}
-
-                        {/* Insumo Form */}
-                        {editingInsumo && (
-                            <div className="bg-zinc-900 border border-fire/35 rounded-2xl p-6 space-y-4 max-w-2xl">
-                                <h3 className="font-bold font-serif text-md text-white">
-                                    {editingInsumo === 'new' ? 'Crear Insumo' : 'Editar Insumo'}
-                                </h3>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                    <div>
-                                        <label className="text-[10px] uppercase tracking-wider font-bold text-zinc-400 block mb-1">Nombre *</label>
-                                        <input
-                                            type="text"
-                                            className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white focus:border-fire outline-none"
-                                            value={insumoForm.nombre}
-                                            onChange={e => setInsumoForm(p => ({ ...p, nombre: e.target.value }))}
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="text-[10px] uppercase tracking-wider font-bold text-zinc-400 block mb-1">Unidad de Medida *</label>
-                                        <input
-                                            type="text"
-                                            className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white focus:border-fire outline-none"
-                                            placeholder="unidad, gr, oz, ltr..."
-                                            value={insumoForm.unidad_medida}
-                                            onChange={e => setInsumoForm(p => ({ ...p, unidad_medida: e.target.value }))}
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="text-[10px] uppercase tracking-wider font-bold text-zinc-400 block mb-1">Costo Unitario ($)</label>
-                                        <input
-                                            type="number"
-                                            className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white focus:border-fire outline-none"
-                                            value={insumoForm.costo_unitario}
-                                            onChange={e => setInsumoForm(p => ({ ...p, costo_unitario: e.target.value }))}
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="text-[10px] uppercase tracking-wider font-bold text-zinc-400 block mb-1">Stock Actual</label>
-                                        <input
-                                            type="number"
-                                            className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white focus:border-fire outline-none"
-                                            disabled={editingInsumo !== 'new'}
-                                            value={insumoForm.stock_actual}
-                                            onChange={e => setInsumoForm(p => ({ ...p, stock_actual: e.target.value }))}
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="text-[10px] uppercase tracking-wider font-bold text-zinc-400 block mb-1">Alerta Stock Mínimo</label>
-                                        <input
-                                            type="number"
-                                            className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white focus:border-fire outline-none"
-                                            value={insumoForm.stock_minimo}
-                                            onChange={e => setInsumoForm(p => ({ ...p, stock_minimo: e.target.value }))}
-                                        />
-                                    </div>
-                                    <div className="flex items-center gap-3 sm:col-span-2">
-                                        <input
-                                            id="ins-activo"
-                                            type="checkbox"
-                                            className="w-4 h-4 accent-fire"
-                                            checked={insumoForm.activo}
-                                            onChange={e => setInsumoForm(p => ({ ...p, activo: e.target.checked }))}
-                                        />
-                                        <label htmlFor="ins-activo" className="text-sm text-zinc-300 font-semibold cursor-pointer">Activo (habilitado para descontar)</label>
-                                    </div>
-                                </div>
-                                <div className="flex gap-3 pt-2">
-                                    <button
-                                        onClick={handleSaveInsumo}
-                                        disabled={insumoSaving}
-                                        className="bg-fire text-white px-5 py-2 rounded-lg text-sm font-bold hover:bg-orange-700 transition-all disabled:opacity-50"
-                                    >
-                                        {insumoSaving ? 'Guardando...' : 'Guardar'}
-                                    </button>
-                                    <button
-                                        onClick={() => setEditingInsumo(null)}
-                                        className="bg-zinc-800 text-zinc-300 px-5 py-2 rounded-lg text-sm font-bold hover:bg-zinc-700 transition-all"
-                                    >
-                                        Cancelar
-                                    </button>
-                                </div>
-                            </div>
-                        )}
-
-                        {/* ── Summary badges ─────────────────────────────────────────── */}
-                        {!inventarioLoading && insumosList.length > 0 && (() => {
-                            const agotados = insumosList.filter(i => Number(i.stock_actual) === 0 && i.activo).length;
-                            const bajos = insumosList.filter(i => Number(i.stock_actual) > 0 && Number(i.stock_actual) <= Number(i.stock_minimo) && i.activo).length;
-                            return (
-                                <div className="flex flex-wrap items-center gap-3">
-                                    <span className="text-xs text-zinc-500 font-mono">{insumosList.length} insumos</span>
-                                    {agotados > 0 && (
-                                        <span className="flex items-center gap-1.5 bg-red-950/30 border border-red-900/40 text-red-400 text-xs font-bold px-3 py-1 rounded-full">
-                                            <span className="w-1.5 h-1.5 rounded-full bg-red-400 inline-block" />
-                                            {agotados} agotado{agotados !== 1 ? 's' : ''}
-                                        </span>
-                                    )}
-                                    {bajos > 0 && (
-                                        <span className="flex items-center gap-1.5 bg-orange-950/30 border border-orange-900/40 text-orange-400 text-xs font-bold px-3 py-1 rounded-full">
-                                            <span className="w-1.5 h-1.5 rounded-full bg-orange-400 inline-block" />
-                                            {bajos} bajo{bajos !== 1 ? 's' : ''}
-                                        </span>
-                                    )}
-                                    {agotados === 0 && bajos === 0 && (
-                                        <span className="flex items-center gap-1.5 bg-green-950/20 border border-green-900/30 text-green-400 text-xs font-bold px-3 py-1 rounded-full">
-                                            <span className="w-1.5 h-1.5 rounded-full bg-green-400 inline-block" />
-                                            Todo en orden
-                                        </span>
-                                    )}
-                                </div>
-                            );
-                        })()}
-
-                        {/* ── Búsqueda + filtros ──────────────────────────────────────── */}
-                        <div className="flex flex-col sm:flex-row gap-3">
-                            <div className="relative flex-1">
-                                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
-                                <input
-                                    type="text"
-                                    placeholder="Buscar insumo..."
-                                    className="w-full bg-zinc-900 border border-zinc-800 rounded-xl pl-9 pr-4 py-2.5 text-sm text-white placeholder:text-zinc-600 focus:border-zinc-600 outline-none"
-                                    value={insumoSearch}
-                                    onChange={e => setInsumoSearch(e.target.value)}
-                                />
-                            </div>
-                            <div className="flex gap-2">
-                                {[['todos', 'Todos'], ['bajos', 'Bajos'], ['agotados', 'Agotados']].map(([val, label]) => (
-                                    <button
-                                        key={val}
-                                        onClick={() => setInsumoFilter(val)}
-                                        className={`px-3 py-2 rounded-xl text-xs font-bold transition-colors ${
-                                            insumoFilter === val
-                                                ? 'bg-zinc-700 text-white'
-                                                : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300 border border-zinc-800'
+                        {/* Fase 2 Bloque 7 & 8: Sub-tab navigation */}
+                        <div className="flex gap-1 bg-zinc-900 p-1 rounded-xl w-full max-w-full overflow-x-auto border border-zinc-800 scrollbar-hide">
+                            {[
+                                { key: 'insumos', label: '📦 Insumos' },
+                                { key: 'recetas', label: '🍔 Recetas' },
+                                { key: 'compras', label: '🛒 Compras' },
+                                { key: 'mermas', label: '📉 Mermas' },
+                            ].map(tab => (
+                                <button
+                                    key={tab.key}
+                                    onClick={() => setInventarioSubTab(tab.key)}
+                                    className={`px-4 py-2.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap flex-shrink-0 ${inventarioSubTab === tab.key
+                                            ? 'bg-fire text-white shadow shadow-fire/15'
+                                            : 'text-zinc-400 hover:text-white hover:bg-zinc-800'
                                         }`}
-                                    >
-                                        {label}
-                                    </button>
-                                ))}
-                            </div>
+                                >
+                                    {tab.label}
+                                </button>
+                            ))}
                         </div>
 
-                        {/* ── Lista de insumos (tarjetas) ──────────────────────────────── */}
-                        <div className="space-y-2">
-                            {inventarioLoading ? (
-                                <div className="p-10 text-center text-zinc-500 animate-pulse">Cargando inventario...</div>
-                            ) : (() => {
-                                const agotados = insumosList.filter(i => Number(i.stock_actual) === 0 && i.activo);
-                                const bajos = insumosList.filter(i => Number(i.stock_actual) > 0 && Number(i.stock_actual) <= Number(i.stock_minimo) && i.activo);
-                                const ok = insumosList.filter(i => Number(i.stock_actual) > Number(i.stock_minimo) || !i.activo);
+                        {/* Sub-tab: Insumos */}
+                        {inventarioSubTab === 'insumos' && (<>
 
-                                let lista = insumoFilter === 'agotados' ? agotados
-                                    : insumoFilter === 'bajos' ? bajos
-                                    : [...agotados, ...bajos, ...ok];
+                            {/* Worker notice — merma habilitada */}
+                            {!currentUserProfile?.es_socio && (
+                                <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-xl flex items-center gap-3 text-zinc-400 text-xs">
+                                    <ShieldAlert className="text-yellow-500 shrink-0" size={16} />
+                                    <span>Puedes registrar <strong>mermas</strong> directamente. Para entradas, correcciones o cambios de inventario contacta al administrador.</span>
+                                </div>
+                            )}
 
-                                if (insumoSearch.trim()) {
-                                    const q = insumoSearch.toLowerCase();
-                                    lista = lista.filter(i => i.nombre.toLowerCase().includes(q));
-                                }
-
-                                if (lista.length === 0) {
-                                    return <div className="p-10 text-center text-zinc-500 text-sm">Sin resultados</div>;
-                                }
-
-                                return lista.map(ins => {
-                                    const stockNum = Number(ins.stock_actual);
-                                    const minNum = Number(ins.stock_minimo);
-                                    const isAgotado = stockNum === 0 && ins.activo;
-                                    const isBajo = stockNum > 0 && stockNum <= minNum && ins.activo;
-                                    const dotColor = isAgotado ? 'bg-red-500' : isBajo ? 'bg-orange-400' : ins.activo ? 'bg-green-500' : 'bg-zinc-600';
-                                    const stockColor = isAgotado ? 'text-red-400' : isBajo ? 'text-orange-400' : 'text-green-400';
-
-                                    return (
-                                        <div key={ins.id} className="bg-zinc-900 border border-zinc-800/60 rounded-2xl p-4 hover:border-zinc-700 transition-colors">
-                                            <div className="flex items-start justify-between gap-3">
-                                                {/* Info */}
-                                                <div className="flex items-start gap-3 min-w-0">
-                                                    <span className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${dotColor}`} />
-                                                    <div className="min-w-0">
-                                                        <p className="font-semibold text-zinc-100 text-sm leading-tight truncate">{ins.nombre}</p>
-                                                        <div className="flex items-baseline gap-2 mt-0.5">
-                                                            <span className={`font-mono font-bold text-lg leading-none ${stockColor}`}>{Number(ins.stock_actual).toLocaleString()}</span>
-                                                            <span className="text-xs text-zinc-500">{ins.unidad_medida}</span>
-                                                            {isBajo && <span className="text-[10px] text-orange-500 font-bold">· mín. {ins.stock_minimo}</span>}
-                                                            {isAgotado && <span className="text-[10px] text-red-500 font-bold">AGOTADO</span>}
-                                                            {!ins.activo && <span className="text-[10px] text-zinc-600 font-bold">INACTIVO</span>}
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                                {/* Acciones */}
-                                                <div className="flex items-center flex-wrap gap-2 shrink-0 justify-end max-w-[200px] sm:max-w-none">
-                                                    {/* Merma — todos */}
-                                                    <button
-                                                        onClick={() => { setShowMermaModal(ins); setMermaForm({ cantidad: '', motivo: '', advertencia: false }); }}
-                                                        className="h-9 px-3 bg-red-950/30 hover:bg-red-950/50 text-red-400 rounded-xl text-xs font-bold transition-colors"
-                                                    >
-                                                        − Merma
-                                                    </button>
-                                                    {/* Ajuste/Entrada — solo socio */}
-                                                    {currentUserProfile?.es_socio && (
-                                                        <button
-                                                            onClick={() => { setShowAjusteModal(ins); setAjusteForm({ tipo: 'AJUSTE', cantidad: 0, motivo: '' }); }}
-                                                            className="h-9 px-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-xl text-xs font-bold transition-colors"
-                                                        >
-                                                            + Stock
-                                                        </button>
-                                                    )}
-                                                    {/* Detalle — todos */}
-                                                    <button
-                                                        onClick={async () => {
-                                                            setShowInsumoDetalle(ins);
-                                                            setInsumoDetalleMovs([]);
-                                                            setInsumoDetalleLoading(true);
-                                                            let cancelled = false;
-                                                            const { data } = await supabase
-                                                                .from('movimientos_inventario')
-                                                                .select('tipo, cantidad, motivo, created_at')
-                                                                .eq('insumo_id', ins.id)
-                                                                .order('created_at', { ascending: false })
-                                                                .limit(10);
-                                                            if (!cancelled) {
-                                                                setInsumoDetalleMovs(data || []);
-                                                                setInsumoDetalleLoading(false);
-                                                            }
-                                                        }}
-                                                        className="h-9 w-9 flex items-center justify-center bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white rounded-xl text-sm font-bold transition-colors"
-                                                        title="Ver detalle"
-                                                    >
-                                                        ›
-                                                    </button>
-                                                    {/* Admin extra: editar, activar */}
-                                                    {currentUserProfile?.es_socio && (
-                                                        <>
-                                                            <button
-                                                                onClick={() => { setEditingInsumo(ins.id); setInsumoForm({ nombre: ins.nombre, unidad_medida: ins.unidad_medida, stock_actual: ins.stock_actual, stock_minimo: ins.stock_minimo, activo: ins.activo, costo_unitario: ins.costo_unitario || 0 }); }}
-                                                                className="h-9 px-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-xs font-bold transition-colors"
-                                                            >
-                                                                Editar
-                                                            </button>
-                                                            <button
-                                                                onClick={() => handleToggleInsumoActivo(ins)}
-                                                                className={`h-9 px-2.5 rounded-xl text-xs font-bold transition-colors ${
-                                                                    ins.activo ? 'bg-red-950/20 text-red-400 hover:bg-red-950/40' : 'bg-green-950/20 text-green-400 hover:bg-green-950/40'
-                                                                }`}
-                                                            >
-                                                                {ins.activo ? 'Apagar' : 'Prender'}
-                                                            </button>
-                                                        </>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    );
-                                });
-                            })()}
-                        </div>
-
-                        {/* Recetas (Recipes) Panel */}
-                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                            {/* Left: Recipe Form (Socio only) */}
-                            {currentUserProfile?.es_socio && (
-                                <div className="lg:col-span-1 bg-zinc-900 border border-zinc-800/80 p-6 rounded-2xl space-y-4">
-                                    <h2 className="text-md font-serif text-white flex items-center gap-2">
-                                        <ClipboardList size={18} className="text-fire" />
-                                        Asociar Insumo a Producto (Receta)
-                                    </h2>
-                                    <div className="space-y-3">
+                            {/* Insumo Form */}
+                            {editingInsumo && (
+                                <div className="bg-zinc-900 border border-fire/35 rounded-2xl p-6 space-y-4 max-w-2xl">
+                                    <h3 className="font-bold font-serif text-md text-white">
+                                        {editingInsumo === 'new' ? 'Crear Insumo' : 'Editar Insumo'}
+                                    </h3>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                         <div>
-                                            <label className="text-[10px] uppercase tracking-wider font-bold text-zinc-400 block mb-1">Producto</label>
-                                            <select
-                                                className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-white focus:border-fire outline-none"
-                                                value={recetaForm.producto_id}
-                                                onChange={e => setRecetaForm(p => ({ ...p, producto_id: e.target.value }))}
-                                            >
-                                                <option value="">Seleccionar producto...</option>
-                                                {productosList.map(prod => (
-                                                    <option key={prod.id} value={prod.id}>{prod.nombre}</option>
-                                                ))}
-                                            </select>
-                                        </div>
-                                        <div>
-                                            <label className="text-[10px] uppercase tracking-wider font-bold text-zinc-400 block mb-1">Insumo</label>
-                                            <select
-                                                className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-white focus:border-fire outline-none"
-                                                value={recetaForm.insumo_id}
-                                                onChange={e => setRecetaForm(p => ({ ...p, insumo_id: e.target.value }))}
-                                            >
-                                                <option value="">Seleccionar insumo...</option>
-                                                {insumosList.map(ins => (
-                                                    <option key={ins.id} value={ins.id}>{ins.nombre}</option>
-                                                ))}
-                                            </select>
-                                        </div>
-                                        <div>
-                                            <label className="text-[10px] uppercase tracking-wider font-bold text-zinc-400 block mb-1">Cantidad por Unidad Vendida</label>
+                                            <label className="text-[10px] uppercase tracking-wider font-bold text-zinc-400 block mb-1">Nombre *</label>
                                             <input
-                                                type="number"
-                                                step="any"
-                                                className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-white focus:border-fire outline-none"
-                                                value={recetaForm.cantidad_por_unidad}
-                                                onChange={e => setRecetaForm(p => ({ ...p, cantidad_por_unidad: e.target.value }))}
+                                                type="text"
+                                                className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white focus:border-fire outline-none"
+                                                value={insumoForm.nombre}
+                                                onChange={e => setInsumoForm(p => ({ ...p, nombre: e.target.value }))}
                                             />
                                         </div>
+                                        <div>
+                                            <label className="text-[10px] uppercase tracking-wider font-bold text-zinc-400 block mb-1">Unidad de Medida *</label>
+                                            <input
+                                                type="text"
+                                                className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white focus:border-fire outline-none"
+                                                placeholder="unidad, gr, oz, ltr..."
+                                                value={insumoForm.unidad_medida}
+                                                onChange={e => setInsumoForm(p => ({ ...p, unidad_medida: e.target.value }))}
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] uppercase tracking-wider font-bold text-zinc-400 block mb-1">Costo Unitario ($)</label>
+                                            <NumericInput
+                                                allowDecimals
+                                                className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white focus:border-fire outline-none"
+                                                value={insumoForm.costo_unitario}
+                                                onChange={val => setInsumoForm(p => ({ ...p, costo_unitario: val }))}
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] uppercase tracking-wider font-bold text-zinc-400 block mb-1">Stock Actual</label>
+                                            <NumericInput
+                                                allowDecimals
+                                                className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white focus:border-fire outline-none"
+                                                disabled={editingInsumo !== 'new'}
+                                                value={insumoForm.stock_actual}
+                                                onChange={val => setInsumoForm(p => ({ ...p, stock_actual: val }))}
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] uppercase tracking-wider font-bold text-zinc-400 block mb-1">Alerta Stock Mínimo</label>
+                                            <NumericInput
+                                                allowDecimals
+                                                className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white focus:border-fire outline-none"
+                                                value={insumoForm.stock_minimo}
+                                                onChange={val => setInsumoForm(p => ({ ...p, stock_minimo: val }))}
+                                            />
+                                        </div>
+                                        <div className="flex items-center gap-3 sm:col-span-2">
+                                            <input
+                                                id="ins-activo"
+                                                type="checkbox"
+                                                className="w-4 h-4 accent-fire"
+                                                checked={insumoForm.activo}
+                                                onChange={e => setInsumoForm(p => ({ ...p, activo: e.target.checked }))}
+                                            />
+                                            <label htmlFor="ins-activo" className="text-sm text-zinc-300 font-semibold cursor-pointer">Activo (habilitado para descontar)</label>
+                                        </div>
+                                    </div>
+                                    <div className="flex gap-3 pt-2">
                                         <button
-                                            onClick={handleSaveReceta}
-                                            disabled={recetaSaving}
-                                            className="w-full bg-fire text-white py-2 rounded-lg text-xs font-bold hover:bg-orange-700 transition-all disabled:opacity-50 uppercase tracking-wider mt-2"
+                                            onClick={handleSaveInsumo}
+                                            disabled={insumoSaving}
+                                            className="bg-fire text-white px-5 py-2 rounded-lg text-sm font-bold hover:bg-orange-700 transition-all disabled:opacity-50"
                                         >
-                                            {recetaSaving ? 'Creando...' : 'Crear Receta / Vínculo'}
+                                            {insumoSaving ? 'Guardando...' : 'Guardar'}
+                                        </button>
+                                        <button
+                                            onClick={() => setEditingInsumo(null)}
+                                            className="bg-zinc-800 text-zinc-300 px-5 py-2 rounded-lg text-sm font-bold hover:bg-zinc-700 transition-all"
+                                        >
+                                            Cancelar
                                         </button>
                                     </div>
                                 </div>
                             )}
 
-                            {/* Right: Recipes List Table */}
-                            <div className="lg:col-span-2 bg-zinc-900 border border-zinc-800/60 rounded-2xl overflow-hidden">
-                                <div className="p-5 border-b border-zinc-850 bg-zinc-950/20">
-                                    <h2 className="text-md font-serif text-white">Vínculos de Receta Activos</h2>
+                            {/* ── Summary badges ─────────────────────────────────────────── */}
+                            {!inventarioLoading && insumosList.length > 0 && (() => {
+                                const agotados = insumosList.filter(i => Number(i.stock_actual) === 0 && i.activo).length;
+                                const bajos = insumosList.filter(i => Number(i.stock_actual) > 0 && Number(i.stock_actual) <= Number(i.stock_minimo) && i.activo).length;
+                                return (
+                                    <div className="flex flex-wrap items-center gap-3">
+                                        <span className="text-xs text-zinc-500 font-mono">{insumosList.length} insumos</span>
+                                        {agotados > 0 && (
+                                            <span className="flex items-center gap-1.5 bg-red-950/30 border border-red-900/40 text-red-400 text-xs font-bold px-3 py-1 rounded-full">
+                                                <span className="w-1.5 h-1.5 rounded-full bg-red-400 inline-block" />
+                                                {agotados} agotado{agotados !== 1 ? 's' : ''}
+                                            </span>
+                                        )}
+                                        {bajos > 0 && (
+                                            <span className="flex items-center gap-1.5 bg-orange-950/30 border border-orange-900/40 text-orange-400 text-xs font-bold px-3 py-1 rounded-full">
+                                                <span className="w-1.5 h-1.5 rounded-full bg-orange-400 inline-block" />
+                                                {bajos} bajo{bajos !== 1 ? 's' : ''}
+                                            </span>
+                                        )}
+                                        {agotados === 0 && bajos === 0 && (
+                                            <span className="flex items-center gap-1.5 bg-green-950/20 border border-green-900/30 text-green-400 text-xs font-bold px-3 py-1 rounded-full">
+                                                <span className="w-1.5 h-1.5 rounded-full bg-green-400 inline-block" />
+                                                Todo en orden
+                                            </span>
+                                        )}
+                                    </div>
+                                );
+                            })()}
+
+                            {/* ── Búsqueda + filtros ──────────────────────────────────────── */}
+                            <div className="flex flex-col sm:flex-row gap-3">
+                                <div className="relative flex-1">
+                                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
+                                    <input
+                                        type="text"
+                                        placeholder="Buscar insumo..."
+                                        className="w-full bg-zinc-900 border border-zinc-800 rounded-xl pl-9 pr-4 py-2.5 text-sm text-white placeholder:text-zinc-600 focus:border-zinc-600 outline-none"
+                                        value={insumoSearch}
+                                        onChange={e => setInsumoSearch(e.target.value)}
+                                    />
                                 </div>
-                                <div className="overflow-x-auto">
-                                    <table className="w-full text-left border-collapse">
-                                        <thead>
-                                            <tr className="bg-zinc-950/40 border-b border-zinc-800 text-[10px] uppercase font-bold text-zinc-400 tracking-wider">
-                                                <th className="p-4">Producto</th>
-                                                <th className="p-4">Insumo Utilizado</th>
-                                                <th className="p-4 text-center">Consumo por Unidad</th>
-                                                {currentUserProfile?.es_socio && <th className="p-4 text-right">Acciones</th>}
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-zinc-850 text-sm">
-                                            {recetasList.length === 0 ? (
-                                                <tr>
-                                                    <td colSpan="4" className="p-8 text-center text-zinc-500">No hay recetas configuradas</td>
-                                                </tr>
-                                            ) : (
-                                                recetasList.map(rec => (
-                                                    <tr key={rec.id} className="hover:bg-zinc-850/10 transition-colors">
-                                                        <td className="p-4 font-semibold text-zinc-200">{rec.productos?.nombre}</td>
-                                                        <td className="p-4 text-zinc-300">{rec.insumos?.nombre}</td>
-                                                        <td className="p-4 text-center font-mono text-zinc-300">{rec.cantidad_por_unidad}</td>
-                                                        {currentUserProfile?.es_socio && (
-                                                            <td className="p-4 text-right">
-                                                                <button
-                                                                    onClick={() => handleDeleteReceta(rec.id)}
-                                                                    className="text-red-400 hover:text-red-300 p-1.5"
-                                                                >
-                                                                    <Trash2 size={15} />
-                                                                </button>
-                                                            </td>
-                                                        )}
-                                                    </tr>
-                                                ))
-                                            )}
-                                        </tbody>
-                                    </table>
+                                <div className="flex gap-2">
+                                    {[['todos', 'Todos'], ['bajos', 'Bajos'], ['agotados', 'Agotados']].map(([val, label]) => (
+                                        <button
+                                            key={val}
+                                            onClick={() => setInsumoFilter(val)}
+                                            className={`px-3 py-2 rounded-xl text-xs font-bold transition-colors ${insumoFilter === val
+                                                    ? 'bg-zinc-700 text-white'
+                                                    : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300 border border-zinc-800'
+                                                }`}
+                                        >
+                                            {label}
+                                        </button>
+                                    ))}
                                 </div>
                             </div>
-                        </div>
+
+                            {/* ── Lista de insumos (tarjetas) ──────────────────────────────── */}
+                            <div className="space-y-2">
+                                {inventarioLoading ? (
+                                    <div className="p-10 text-center text-zinc-500 animate-pulse">Cargando inventario...</div>
+                                ) : (() => {
+                                    const agotados = insumosList.filter(i => Number(i.stock_actual) === 0 && i.activo);
+                                    const bajos = insumosList.filter(i => Number(i.stock_actual) > 0 && Number(i.stock_actual) <= Number(i.stock_minimo) && i.activo);
+                                    const ok = insumosList.filter(i => Number(i.stock_actual) > Number(i.stock_minimo) || !i.activo);
+
+                                    let lista = insumoFilter === 'agotados' ? agotados
+                                        : insumoFilter === 'bajos' ? bajos
+                                            : [...agotados, ...bajos, ...ok];
+
+                                    if (insumoSearch.trim()) {
+                                        const q = insumoSearch.toLowerCase();
+                                        lista = lista.filter(i => i.nombre.toLowerCase().includes(q));
+                                    }
+
+                                    if (lista.length === 0) {
+                                        return <div className="p-10 text-center text-zinc-500 text-sm">Sin resultados</div>;
+                                    }
+
+                                    return lista.map(ins => {
+                                        const stockNum = Number(ins.stock_actual);
+                                        const minNum = Number(ins.stock_minimo);
+                                        const isAgotado = stockNum === 0 && ins.activo;
+                                        const isBajo = stockNum > 0 && stockNum <= minNum && ins.activo;
+                                        const dotColor = isAgotado ? 'bg-red-500' : isBajo ? 'bg-orange-400' : ins.activo ? 'bg-green-500' : 'bg-zinc-600';
+                                        const stockColor = isAgotado ? 'text-red-400' : isBajo ? 'text-orange-400' : 'text-green-400';
+
+                                        return (
+                                            <div key={ins.id} className="bg-zinc-900 border border-zinc-800/60 rounded-2xl p-4 hover:border-zinc-700 transition-colors">
+                                                <div className="flex items-start justify-between gap-3">
+                                                    {/* Info */}
+                                                    <div className="flex items-start gap-3 min-w-0">
+                                                        <span className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${dotColor}`} />
+                                                        <div className="min-w-0">
+                                                            <p className="font-semibold text-zinc-100 text-sm leading-tight truncate">{ins.nombre}</p>
+                                                            <div className="flex items-baseline gap-2 mt-0.5">
+                                                                <span className={`font-mono font-bold text-lg leading-none ${stockColor}`}>{Number(ins.stock_actual).toLocaleString()}</span>
+                                                                <span className="text-xs text-zinc-500">{ins.unidad_medida}</span>
+                                                                {isBajo && <span className="text-[10px] text-orange-500 font-bold">· mín. {ins.stock_minimo}</span>}
+                                                                {isAgotado && <span className="text-[10px] text-red-500 font-bold">AGOTADO</span>}
+                                                                {!ins.activo && <span className="text-[10px] text-zinc-600 font-bold">INACTIVO</span>}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    {/* Acciones */}
+                                                    <div className="flex items-center flex-wrap gap-2 shrink-0 justify-end max-w-[200px] sm:max-w-none">
+                                                        {/* Merma — todos */}
+                                                        <button
+                                                            onClick={() => { setShowMermaModal(ins); setMermaForm({ cantidad: '', motivo: '', advertencia: false }); }}
+                                                            className="h-9 px-3 bg-red-950/30 hover:bg-red-950/50 text-red-400 rounded-xl text-xs font-bold transition-colors"
+                                                        >
+                                                            − Merma
+                                                        </button>
+                                                        {/* Ajuste/Entrada — solo socio */}
+                                                        {currentUserProfile?.es_socio && (
+                                                            <button
+                                                                onClick={() => { setShowAjusteModal(ins); setAjusteForm({ tipo: 'AJUSTE', cantidad: 0, motivo: '' }); }}
+                                                                className="h-9 px-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-xl text-xs font-bold transition-colors"
+                                                            >
+                                                                + Stock
+                                                            </button>
+                                                        )}
+                                                        {/* Detalle — todos */}
+                                                        <button
+                                                            onClick={async () => {
+                                                                setShowInsumoDetalle(ins);
+                                                                setInsumoDetalleMovs([]);
+                                                                setInsumoDetalleLoading(true);
+                                                                let cancelled = false;
+                                                                const { data } = await supabase
+                                                                    .from('movimientos_inventario')
+                                                                    .select('tipo, cantidad, motivo, created_at')
+                                                                    .eq('insumo_id', ins.id)
+                                                                    .order('created_at', { ascending: false })
+                                                                    .limit(10);
+                                                                if (!cancelled) {
+                                                                    setInsumoDetalleMovs(data || []);
+                                                                    setInsumoDetalleLoading(false);
+                                                                }
+                                                            }}
+                                                            className="h-9 w-9 flex items-center justify-center bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white rounded-xl text-sm font-bold transition-colors"
+                                                            title="Ver detalle"
+                                                        >
+                                                            ›
+                                                        </button>
+                                                        {/* Admin extra: editar, activar */}
+                                                        {currentUserProfile?.es_socio && (
+                                                            <>
+                                                                <button
+                                                                    onClick={() => { setEditingInsumo(ins.id); setInsumoForm({ nombre: ins.nombre, unidad_medida: ins.unidad_medida, stock_actual: ins.stock_actual, stock_minimo: ins.stock_minimo, activo: ins.activo, costo_unitario: ins.costo_unitario || 0 }); }}
+                                                                    className="h-9 px-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-xs font-bold transition-colors"
+                                                                >
+                                                                    Editar
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => handleToggleInsumoActivo(ins)}
+                                                                    className={`h-9 px-2.5 rounded-xl text-xs font-bold transition-colors ${ins.activo ? 'bg-red-950/20 text-red-400 hover:bg-red-950/40' : 'bg-green-950/20 text-green-400 hover:bg-green-950/40'
+                                                                        }`}
+                                                                >
+                                                                    {ins.activo ? 'Apagar' : 'Prender'}
+                                                                </button>
+                                                            </>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    });
+                                })()}
+                            </div>
+                        </>)}
+
+                        {/* Sub-tab: Recetas — Fase 2 Bloque 7 */}
+                        {inventarioSubTab === 'recetas' && (
+                            <div className="space-y-4 pt-2">
+                                {/* Recetas (Recipes) Panel — B1: Rediseño mobile-first (Tarjetas y agrupamiento por producto) */}
+                                <div className="space-y-4">
+                                    <div className="flex items-center justify-between">
+                                        <h2 className="text-lg font-serif text-white flex items-center gap-2">
+                                            <ClipboardList size={20} className="text-fire" />
+                                            Fichas Técnicas (Recetas)
+                                        </h2>
+                                    </div>
+
+                                    {/* Left/Top: Recipe Form (Socio only) */}
+                                    {currentUserProfile?.es_socio && (
+                                        <div className="bg-zinc-900 border border-zinc-800/80 p-4 sm:p-5 rounded-2xl space-y-4">
+                                            <h3 className="text-xs uppercase tracking-widest font-bold text-zinc-400">
+                                                Vincular Insumo a Producto
+                                            </h3>
+                                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                                <div>
+                                                    <select
+                                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2.5 text-xs text-white focus:border-fire outline-none"
+                                                        value={recetaForm.producto_id}
+                                                        onChange={e => setRecetaForm(p => ({ ...p, producto_id: e.target.value }))}
+                                                    >
+                                                        <option value="">Seleccionar producto...</option>
+                                                        {productosList.map(prod => (
+                                                            <option key={prod.id} value={prod.id}>{prod.nombre}</option>
+                                                        ))}
+                                                    </select>
+                                                </div>
+                                                <div>
+                                                    <select
+                                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2.5 text-xs text-white focus:border-fire outline-none"
+                                                        value={recetaForm.insumo_id}
+                                                        onChange={e => setRecetaForm(p => ({ ...p, insumo_id: e.target.value }))}
+                                                    >
+                                                        <option value="">Seleccionar insumo...</option>
+                                                        {insumosList.map(ins => (
+                                                            <option key={ins.id} value={ins.id}>{ins.nombre}</option>
+                                                        ))}
+                                                    </select>
+                                                </div>
+                                                <div className="flex gap-2">
+                                                    <NumericInput
+                                                        allowDecimals
+                                                        placeholder="Cant. x Unidad"
+                                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2.5 text-xs text-white focus:border-fire outline-none"
+                                                        value={recetaForm.cantidad_por_unidad}
+                                                        onChange={val => setRecetaForm(p => ({ ...p, cantidad_por_unidad: val }))}
+                                                    />
+                                                    <button
+                                                        onClick={handleSaveReceta}
+                                                        disabled={recetaSaving}
+                                                        className="bg-fire text-white px-4 rounded-lg text-xs font-bold hover:bg-orange-700 transition-all disabled:opacity-50 flex-shrink-0"
+                                                    >
+                                                        {recetaSaving ? '...' : <Plus size={16} />}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Right/Bottom: Recipes List Cards */}
+                                    <div className="space-y-4">
+                                        {(() => {
+                                            const grouped = recetasList.reduce((acc, rec) => {
+                                                const pName = rec.productos?.nombre || 'Producto Desconocido';
+                                                if (!acc[pName]) acc[pName] = [];
+                                                acc[pName].push(rec);
+                                                return acc;
+                                            }, {});
+
+                                            const entries = Object.entries(grouped);
+                                            if (entries.length === 0) {
+                                                return (
+                                                    <div className="bg-zinc-900 border border-zinc-800/60 rounded-2xl p-8 text-center text-zinc-500 text-sm">
+                                                        No hay recetas configuradas
+                                                    </div>
+                                                );
+                                            }
+
+                                            return entries.map(([prodName, recs]) => (
+                                                <details key={prodName} className="bg-zinc-900 border border-zinc-800/60 rounded-2xl overflow-hidden shadow-sm group">
+                                                    <summary className="p-4 bg-zinc-950/40 cursor-pointer flex items-center justify-between hover:bg-zinc-800/30 transition-colors list-none [&::-webkit-details-marker]:hidden">
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="text-zinc-500 group-open:rotate-90 transition-transform">›</span>
+                                                            <h3 className="font-bold text-zinc-100">{prodName}</h3>
+                                                        </div>
+                                                        <span className="text-[9px] uppercase font-bold text-zinc-500 bg-zinc-800/50 px-2 py-1 rounded-md">
+                                                            {recs.length} insumo{recs.length !== 1 ? 's' : ''}
+                                                        </span>
+                                                    </summary>
+                                                    <div className="divide-y divide-zinc-850 text-sm border-t border-zinc-850 bg-zinc-900/50">
+                                                        {recs.map(rec => (
+                                                            <div key={rec.id} className="p-3 px-4 flex items-center justify-between gap-3 hover:bg-zinc-850/50 transition-colors">
+                                                                <div className="min-w-0">
+                                                                    <p className="font-medium text-zinc-300 truncate">{rec.insumos?.nombre}</p>
+                                                                </div>
+                                                                <div className="flex items-center gap-4 shrink-0">
+                                                                    {editingRecetaInline === rec.id ? (
+                                                                        <div className="flex items-center gap-2">
+                                                                            <NumericInput
+                                                                                allowDecimals
+                                                                                className="w-20 bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-xs text-white focus:border-fire outline-none"
+                                                                                value={inlineRecetaQty}
+                                                                                onChange={setInlineRecetaQty}
+                                                                            />
+                                                                            <button
+                                                                                onClick={() => handleUpdateRecetaQty(rec.id)}
+                                                                                disabled={inlineRecetaSaving}
+                                                                                className="text-green-400 hover:text-green-300 bg-green-500/10 hover:bg-green-500/20 w-8 h-8 rounded-xl flex items-center justify-center transition-colors"
+                                                                            >
+                                                                                <Check size={14} />
+                                                                            </button>
+                                                                            <button
+                                                                                onClick={() => setEditingRecetaInline(null)}
+                                                                                className="text-zinc-400 hover:text-zinc-300 bg-zinc-500/10 hover:bg-zinc-500/20 w-8 h-8 rounded-xl flex items-center justify-center transition-colors"
+                                                                            >
+                                                                                <X size={14} />
+                                                                            </button>
+                                                                        </div>
+                                                                    ) : (
+                                                                        <span className="font-mono font-bold text-zinc-400">
+                                                                            {rec.cantidad_por_unidad} <span className="text-[10px] text-zinc-500 font-sans">{rec.insumos?.unidad_medida}</span>
+                                                                        </span>
+                                                                    )}
+                                                                    {currentUserProfile?.es_socio && editingRecetaInline !== rec.id && (
+                                                                        <div className="flex items-center gap-2">
+                                                                            <button
+                                                                                onClick={() => {
+                                                                                    setEditingRecetaInline(rec.id);
+                                                                                    setInlineRecetaQty(rec.cantidad_por_unidad);
+                                                                                }}
+                                                                                className="text-blue-400 hover:text-blue-300 bg-blue-500/10 hover:bg-blue-500/20 w-8 h-8 rounded-xl flex items-center justify-center transition-colors"
+                                                                            >
+                                                                                <Pencil size={14} />
+                                                                            </button>
+                                                                            <button
+                                                                                onClick={() => handleDeleteReceta(rec.id)}
+                                                                                className="text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/20 w-8 h-8 rounded-xl flex items-center justify-center transition-colors"
+                                                                            >
+                                                                                <Trash2 size={14} />
+                                                                            </button>
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </details>
+                                            ));
+                                        })()}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 )}
 
@@ -4791,16 +5540,14 @@ const AdminDashboard = () => {
                                     <label className="text-[10px] uppercase tracking-wider font-bold text-zinc-400 block mb-1.5">
                                         ¿Cuánto se perdió? ({ins.unidad_medida})
                                     </label>
-                                    <input
-                                        type="number"
-                                        inputMode="decimal"
-                                        min="0.01"
-                                        step="any"
+                                    <NumericInput
+                                        allowDecimals
+                                        min={0.01}
                                         autoFocus
                                         className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-xl text-white font-mono focus:border-red-500 outline-none placeholder:text-zinc-700"
                                         placeholder="0"
                                         value={mermaForm.cantidad}
-                                        onChange={e => setMermaForm(p => ({ ...p, cantidad: e.target.value }))}
+                                        onChange={val => setMermaForm(p => ({ ...p, cantidad: val }))}
                                     />
                                     {mermaForm.cantidad !== '' && cantidadNum > stockActual && (
                                         <p className="text-xs text-red-400 mt-1.5">⚠ La cantidad supera el stock disponible ({ins.stock_actual} {ins.unidad_medida})</p>
@@ -4833,23 +5580,17 @@ const AdminDashboard = () => {
 
                                 {/* Campo motivo */}
                                 <div>
-                                    <label className="text-[10px] uppercase tracking-wider font-bold text-zinc-400 block mb-1.5">Motivo <span className="text-zinc-600 normal-case font-normal">(recomendado)</span></label>
+                                    <label className="text-[10px] uppercase tracking-wider font-bold text-zinc-400 block mb-1.5">Motivo <span className="text-red-500 font-bold">*</span></label>
                                     <input
                                         type="text"
-                                        className={`w-full bg-zinc-950 border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none placeholder:text-zinc-700 transition-colors ${
-                                            mermaForm.advertencia && !mermaForm.motivo.trim()
-                                                ? 'border-yellow-500 focus:border-yellow-400'
-                                                : 'border-zinc-800 focus:border-zinc-600'
-                                        }`}
-                                        placeholder="Ej. Se quemó en la freidora"
+                                        className="w-full bg-zinc-950 border border-zinc-800 focus:border-zinc-600 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none placeholder:text-zinc-700 transition-colors"
+                                        placeholder="Ej. Se quemó en la freidora (Obligatorio)"
                                         value={mermaForm.motivo}
-                                        onChange={e => setMermaForm(p => ({ ...p, motivo: e.target.value, advertencia: false }))}
+                                        onChange={e => setMermaForm(p => ({ ...p, motivo: e.target.value }))}
                                     />
-                                    {/* Aviso no bloqueante cuando el usuario intentó confirmar sin motivo */}
-                                    {mermaForm.advertencia && !mermaForm.motivo.trim() && (
-                                        <p className="text-xs text-yellow-400 mt-1.5">
-                                            ⚠ Se recomienda indicar el motivo para poder auditar la merma.
-                                            Puedes agregar uno arriba o confirmar de todas formas.
+                                    {!mermaForm.motivo.trim() && (
+                                        <p className="text-xs text-red-400 mt-1.5">
+                                            ⚠️ El motivo es obligatorio para auditar la merma.
                                         </p>
                                     )}
                                 </div>
@@ -4864,19 +5605,10 @@ const AdminDashboard = () => {
                                     </button>
                                     <button
                                         onClick={handleRegistrarMerma}
-                                        disabled={!cantidadValida || mermaSaving}
-                                        className={`flex-1 py-3 rounded-xl text-sm font-bold transition-colors disabled:bg-zinc-800 disabled:text-zinc-600 ${
-                                            mermaForm.advertencia && !mermaForm.motivo.trim()
-                                                ? 'bg-yellow-700 hover:bg-yellow-600 text-white'
-                                                : 'bg-red-700 hover:bg-red-600 text-white'
-                                        }`}
+                                        disabled={!cantidadValida || !mermaForm.motivo.trim() || mermaSaving}
+                                        className="flex-1 py-3 rounded-xl text-sm font-bold transition-colors disabled:bg-zinc-800 disabled:text-zinc-600 bg-red-700 hover:bg-red-600 text-white"
                                     >
-                                        {mermaSaving
-                                            ? 'Registrando...'
-                                            : (mermaForm.advertencia && !mermaForm.motivo.trim())
-                                                ? 'Confirmar sin motivo'
-                                                : 'Registrar merma'
-                                        }
+                                        {mermaSaving ? 'Registrando...' : 'Registrar merma'}
                                     </button>
                                 </div>
                             </div>
@@ -4935,12 +5667,11 @@ const AdminDashboard = () => {
                                         {insumoDetalleMovs.map((mov, i) => (
                                             <div key={i} className="flex items-center justify-between gap-3 text-sm">
                                                 <div className="flex items-center gap-2">
-                                                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
-                                                        mov.tipo === 'VENTA' ? 'bg-zinc-800 text-zinc-400'
-                                                        : mov.tipo === 'MERMA' ? 'bg-red-950/40 text-red-400'
-                                                        : mov.tipo === 'ENTRADA' ? 'bg-blue-950/40 text-blue-400'
-                                                        : 'bg-orange-950/30 text-orange-400'
-                                                    }`}>{mov.tipo}</span>
+                                                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${mov.tipo === 'VENTA' ? 'bg-zinc-800 text-zinc-400'
+                                                            : mov.tipo === 'MERMA' ? 'bg-red-950/40 text-red-400'
+                                                                : mov.tipo === 'ENTRADA' ? 'bg-blue-950/40 text-blue-400'
+                                                                    : 'bg-orange-950/30 text-orange-400'
+                                                        }`}>{mov.tipo}</span>
                                                     <span className="text-zinc-500 text-xs truncate max-w-[120px]">{mov.motivo || '—'}</span>
                                                 </div>
                                                 <div className="flex items-center gap-2 shrink-0">
@@ -5014,16 +5745,13 @@ const AdminDashboard = () => {
                                 {/* Cantidad */}
                                 <div>
                                     <label className="text-[10px] uppercase tracking-wider font-bold text-zinc-400 block mb-1.5">Cantidad ({ins.unidad_medida})</label>
-                                    <input
-                                        type="number"
-                                        inputMode="decimal"
-                                        min="0.01"
-                                        step="any"
-                                        autoFocus
-                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-xl text-white font-mono focus:border-zinc-600 outline-none placeholder:text-zinc-700"
+                                    <NumericInput
+                                        allowDecimals
+                                        min={0.01}
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2.5 text-sm text-white font-mono focus:border-fire outline-none"
                                         placeholder="0"
-                                        value={ajusteForm.cantidad || ''}
-                                        onChange={e => setAjusteForm(p => ({ ...p, cantidad: e.target.value }))}
+                                        value={ajusteForm.cantidad}
+                                        onChange={val => setAjusteForm(p => ({ ...p, cantidad: val }))}
                                     />
                                 </div>
                                 {/* Preview */}
@@ -5076,8 +5804,8 @@ const AdminDashboard = () => {
                     );
                 })()}
 
-                {activeTab === 'compras' && (
-                    <div className="space-y-10 font-sans">
+                {activeTab === 'inventario' && inventarioSubTab === 'compras' && (
+                    <div className="space-y-6 pt-2 font-sans">
                         <SectionHeader
                             title="Compras y Proveedores"
                             subtitle="Gestión de abastecimiento, órdenes de compra y facturación de proveedores"
@@ -5196,21 +5924,21 @@ const AdminDashboard = () => {
                                         </div>
                                         <div>
                                             <label className="text-[9px] uppercase tracking-wider font-bold text-zinc-500 block mb-1">Cantidad</label>
-                                            <input
-                                                type="number"
+                                            <NumericInput
+                                                allowDecimals
                                                 className="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-white focus:border-fire outline-none font-mono"
                                                 value={selectedDetail.cantidad}
-                                                onChange={e => setSelectedDetail(p => ({ ...p, cantidad: e.target.value }))}
+                                                onChange={val => setSelectedDetail(p => ({ ...p, cantidad: val }))}
                                             />
                                         </div>
                                         <div>
                                             <label className="text-[9px] uppercase tracking-wider font-bold text-zinc-500 block mb-1">Costo Unitario ($)</label>
                                             <div className="flex gap-2">
-                                                <input
-                                                    type="number"
+                                                <NumericInput
+                                                    allowDecimals
                                                     className="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-white focus:border-fire outline-none font-mono"
                                                     value={selectedDetail.costo_unitario}
-                                                    onChange={e => setSelectedDetail(p => ({ ...p, costo_unitario: e.target.value }))}
+                                                    onChange={val => setSelectedDetail(p => ({ ...p, costo_unitario: val }))}
                                                 />
                                                 <button
                                                     onClick={handleAddCompraDetail}
@@ -5274,11 +6002,10 @@ const AdminDashboard = () => {
                                                 key={m}
                                                 type="button"
                                                 onClick={() => setCompraForm(f => ({ ...f, metodo_pago: m }))}
-                                                className={`px-4 py-2 rounded-lg text-xs font-bold border transition-all ${
-                                                    compraForm.metodo_pago === m
+                                                className={`px-4 py-2 rounded-lg text-xs font-bold border transition-all ${compraForm.metodo_pago === m
                                                         ? 'bg-fire text-white border-fire'
                                                         : 'bg-zinc-900 text-zinc-400 border-zinc-700 hover:border-fire/50'
-                                                }`}
+                                                    }`}
                                             >
                                                 {m}
                                             </button>
@@ -5436,84 +6163,56 @@ const AdminDashboard = () => {
                                         Historial de Compras y Carga
                                     </h2>
                                 </div>
-                                <div className="overflow-x-auto">
-                                    <table className="w-full text-left text-xs border-collapse">
-                                        <thead>
-                                            <tr className="bg-zinc-950/40 text-zinc-400 font-bold border-b border-zinc-800 uppercase tracking-wider">
-                                                <th className="p-4">Fecha</th>
-                                                <th className="p-4">Proveedor</th>
-                                                <th className="p-4">Registrado por</th>
-                                                <th className="p-4">Estado</th>
-                                                <th className="p-4 text-right">Total</th>
-                                                {currentUserProfile?.es_socio && <th className="p-4 text-right">Acciones</th>}
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-zinc-850">
-                                            {comprasLoading ? (
-                                                <tr>
-                                                    <td colSpan="6" className="p-8 text-center text-zinc-500 animate-pulse">Cargando compras...</td>
-                                                </tr>
-                                            ) : comprasList.length === 0 ? (
-                                                <tr>
-                                                    <td colSpan="6" className="p-8 text-center text-zinc-500">No se registran compras registradas</td>
-                                                </tr>
-                                            ) : (
-                                                comprasList.map(cmp => (
-                                                    <tr key={cmp.id} className="hover:bg-zinc-850/10">
-                                                        <td className="p-4 text-zinc-400 font-mono text-[10px]">
-                                                            {new Date(cmp.fecha).toLocaleString('es-ES')}
-                                                        </td>
-                                                        <td className="p-4 font-semibold text-zinc-200">{cmp.proveedores?.nombre}</td>
-                                                        <td className="p-4 text-zinc-400">{cmp.perfiles_trabajadores?.nombre || 'Desconocido'}</td>
-                                                        <td className="p-4">
-                                                            <span className={`text-[9px] font-bold px-2 py-0.5 rounded ${cmp.estado === 'RECIBIDA'
-                                                                    ? 'bg-green-500/10 text-green-400'
-                                                                    : cmp.estado === 'BORRADOR'
-                                                                        ? 'bg-yellow-500/10 text-yellow-400'
-                                                                        : 'bg-red-500/10 text-red-400'
-                                                                }`}>
-                                                                {cmp.estado}
-                                                            </span>
-                                                        </td>
-                                                        <td className="p-4 text-right font-bold text-zinc-100 font-mono">
-                                                            ${cmp.total.toLocaleString()}
-                                                        </td>
-                                                        {currentUserProfile?.es_socio && (
-                                                            <td className="p-4 text-right space-x-2">
-                                                                {cmp.estado === 'BORRADOR' && (
-                                                                    <>
-                                                                        <button
-                                                                            onClick={() => handleRecibirCompra(cmp)}
-                                                                            disabled={actionLoading}
-                                                                            className="bg-green-950/20 text-green-400 px-2 py-1 rounded font-bold text-[10px] hover:bg-green-950/40 disabled:opacity-50 disabled:cursor-not-allowed"
-                                                                        >
-                                                                            {actionLoading ? 'Procesando...' : 'Recibir'}
-                                                                        </button>
-                                                                        <button
-                                                                            onClick={() => setShowAnularModal(cmp)}
-                                                                            disabled={actionLoading}
-                                                                            className="bg-red-950/20 text-red-400 px-2 py-1 rounded font-bold text-[10px] hover:bg-red-950/40 disabled:opacity-50 disabled:cursor-not-allowed"
-                                                                        >
-                                                                            Anular
-                                                                        </button>
-                                                                    </>
-                                                                )}
-                                                                {cmp.estado === 'RECIBIDA' && (
-                                                                    <button
-                                                                        onClick={() => setShowAnularModal(cmp)}
-                                                                        disabled={actionLoading}
-                                                                        className="bg-red-950/20 text-red-400 px-2 py-1 rounded font-bold text-[10px] hover:bg-red-950/40 disabled:opacity-50 disabled:cursor-not-allowed"
-                                                                    >
-                                                                        Anular
-                                                                    </button>
-                                                                )}
-                                                            </td>
+                                <div className="p-4 space-y-3">
+                                    {comprasLoading ? (
+                                        <div className="p-8 text-center text-zinc-500 animate-pulse">Cargando compras...</div>
+                                    ) : comprasList.length === 0 ? (
+                                        <div className="p-8 text-center text-zinc-500">No hay compras registradas</div>
+                                    ) : (
+                                        comprasList.map(cmp => (
+                                            <div key={cmp.id} className="bg-zinc-950/50 border border-zinc-850 rounded-xl p-4 hover:border-zinc-700 transition-colors">
+                                                <div className="flex justify-between items-start mb-2">
+                                                    <div>
+                                                        <h4 className="font-bold text-zinc-100">{cmp.proveedores?.nombre}</h4>
+                                                        <p className="text-[10px] text-zinc-500 font-mono">
+                                                            {new Date(cmp.fecha).toLocaleString('es-ES')} • {cmp.perfiles_trabajadores?.nombre || 'Desconocido'}
+                                                        </p>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <div className="font-bold text-zinc-100 font-mono text-sm">${cmp.total.toLocaleString()}</div>
+                                                        <span className={`inline-block mt-1 text-[9px] font-bold px-2 py-0.5 rounded ${cmp.estado === 'RECIBIDA'
+                                                            ? 'bg-green-500/10 text-green-400'
+                                                            : cmp.estado === 'BORRADOR'
+                                                                ? 'bg-yellow-500/10 text-yellow-400'
+                                                                : 'bg-red-500/10 text-red-400'
+                                                            }`}>
+                                                            {cmp.estado}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                                {currentUserProfile?.es_socio && (cmp.estado === 'BORRADOR' || cmp.estado === 'RECIBIDA') && (
+                                                    <div className="flex gap-2 justify-end mt-3 border-t border-zinc-800 pt-3">
+                                                        {cmp.estado === 'BORRADOR' && (
+                                                            <button
+                                                                onClick={() => handleRecibirCompra(cmp)}
+                                                                disabled={actionLoading}
+                                                                className="bg-green-950/20 text-green-400 px-3 py-1.5 rounded-lg font-bold text-xs hover:bg-green-950/40 disabled:opacity-50 transition-colors"
+                                                            >
+                                                                {actionLoading ? 'Procesando...' : 'Recibir'}
+                                                            </button>
                                                         )}
-                                                    </tr>
-                                                ))
-                                            )}
-                                        </tbody>
-                                    </table>
+                                                        <button
+                                                            onClick={() => setShowAnularModal(cmp)}
+                                                            disabled={actionLoading}
+                                                            className="bg-red-950/20 text-red-400 px-3 py-1.5 rounded-lg font-bold text-xs hover:bg-red-950/40 disabled:opacity-50 transition-colors"
+                                                        >
+                                                            Anular
+                                                        </button>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ))
+                                    )}
                                 </div>
                             </div>
                         </div>
@@ -5575,11 +6274,10 @@ const AdminDashboard = () => {
                                                 key={m}
                                                 type="button"
                                                 onClick={() => setRecibirMetodoPago(m)}
-                                                className={`flex-1 py-2.5 rounded-lg text-xs font-bold border transition-all ${
-                                                    recibirMetodoPago === m
+                                                className={`flex-1 py-2.5 rounded-lg text-xs font-bold border transition-all ${recibirMetodoPago === m
                                                         ? 'bg-fire text-white border-fire'
                                                         : 'bg-zinc-950 text-zinc-400 border-zinc-700 hover:border-fire/50'
-                                                }`}
+                                                    }`}
                                             >
                                                 {m}
                                             </button>
@@ -5663,14 +6361,11 @@ const AdminDashboard = () => {
                                                 <td className="p-3 text-right font-mono text-zinc-400">${Number(ins.costo_unitario || 0).toLocaleString()}</td>
                                                 <td className="p-3 text-center font-mono font-bold text-zinc-400">{ins.stock_actual}</td>
                                                 <td className="p-3 text-right">
-                                                    <input
-                                                        type="number"
-                                                        step="any"
-                                                        min="0"
+                                                    <NumericInput
+                                                        allowDecimals
                                                         className="bg-zinc-900 border border-zinc-700 focus:border-green-500 rounded px-2.5 py-1 text-xs text-white text-right font-mono font-bold w-28 outline-none"
                                                         value={cargaMasivaForm[ins.id] !== undefined ? cargaMasivaForm[ins.id] : ins.stock_actual}
-                                                        onChange={e => {
-                                                            const val = e.target.value;
+                                                        onChange={val => {
                                                             setCargaMasivaForm(prev => ({ ...prev, [ins.id]: val }));
                                                         }}
                                                     />
@@ -5749,11 +6444,10 @@ const AdminDashboard = () => {
 
                                 <div>
                                     <label className="text-[10px] font-bold uppercase text-zinc-400 block mb-1">Monto a Liquidar ($) *</label>
-                                    <input
-                                        type="number"
+                                    <NumericInput
                                         className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-white outline-none focus:border-fire font-bold text-sm"
                                         value={liqMontoForm}
-                                        onChange={(e) => setLiqMontoForm(Number(e.target.value))}
+                                        onChange={(val) => setLiqMontoForm(Number(val))}
                                     />
                                 </div>
 
@@ -5820,11 +6514,10 @@ const AdminDashboard = () => {
 
                                 <div>
                                     <label className="text-[10px] font-bold uppercase text-zinc-400 block mb-1">Monto ($) *</label>
-                                    <input
-                                        type="number"
+                                    <NumericInput
                                         className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-white outline-none focus:border-fire font-bold text-sm"
                                         value={gastoForm.monto}
-                                        onChange={(e) => setGastoForm({ ...gastoForm, monto: e.target.value })}
+                                        onChange={(val) => setGastoForm({ ...gastoForm, monto: val })}
                                     />
                                 </div>
 
@@ -5983,6 +6676,74 @@ const AdminDashboard = () => {
                     </div>
                 )}
 
+                {/* B12: Modal Transferencia Interna */}
+                {showTransferModal && (
+                    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[999]">
+                        <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-2xl relative space-y-4 font-sans">
+                            <div className="flex justify-between items-center border-b border-zinc-800 pb-3">
+                                <h3 className="text-lg font-bold font-serif text-white">🔀 Transferencia Interna</h3>
+                                <button onClick={() => setShowTransferModal(false)} className="text-zinc-500 hover:text-white text-xl">✕</button>
+                            </div>
+                            <p className="text-xs text-zinc-400">Mueve dinero entre cuentas internas sin afectar ingresos ni gastos.</p>
+                            <div className="space-y-3">
+                                <div>
+                                    <label className="text-xs font-bold uppercase tracking-wider text-zinc-400 block mb-1">Cuenta Origen</label>
+                                    <select
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm text-white outline-none focus:border-fire"
+                                        value={transferForm.origen}
+                                        onChange={(e) => setTransferForm(p => ({ ...p, origen: e.target.value }))}
+                                    >
+                                        <option value="EFECTIVO">💵 Efectivo</option>
+                                        <option value="NEQUI">📱 Nequi</option>
+                                        <option value="BANCOLOMBIA">🏦 Bancolombia</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold uppercase tracking-wider text-zinc-400 block mb-1">Cuenta Destino</label>
+                                    <select
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm text-white outline-none focus:border-fire"
+                                        value={transferForm.destino}
+                                        onChange={(e) => setTransferForm(p => ({ ...p, destino: e.target.value }))}
+                                    >
+                                        <option value="EFECTIVO">💵 Efectivo</option>
+                                        <option value="NEQUI">📱 Nequi</option>
+                                        <option value="BANCOLOMBIA">🏦 Bancolombia</option>
+                                    </select>
+                                </div>
+                                {transferForm.origen === transferForm.destino && (
+                                    <p className="text-[10px] text-red-400 font-bold">⚠️ Origen y destino no pueden ser iguales</p>
+                                )}
+                                <div>
+                                    <label className="text-xs font-bold uppercase tracking-wider text-zinc-400 block mb-1">Monto ($)</label>
+                                    <NumericInput
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm text-white outline-none focus:border-fire text-center font-bold"
+                                        value={transferForm.monto || ''}
+                                        placeholder="0"
+                                        onChange={(val) => setTransferForm(p => ({ ...p, monto: val }))}
+                                    />
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold uppercase tracking-wider text-zinc-400 block mb-1">Observaciones (Opcional)</label>
+                                    <textarea
+                                        rows={2}
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-white outline-none focus:border-fire resize-none"
+                                        placeholder="Ej: Retiro de efectivo para consignación bancaria"
+                                        value={transferForm.observaciones}
+                                        onChange={(e) => setTransferForm(p => ({ ...p, observaciones: e.target.value }))}
+                                    />
+                                </div>
+                            </div>
+                            <button
+                                onClick={handleTransferInterna}
+                                disabled={actionLoading || transferForm.origen === transferForm.destino || !transferForm.monto || transferForm.monto <= 0}
+                                className="w-full bg-fire hover:bg-orange-700 text-white py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                {actionLoading ? 'Procesando...' : '✅ Confirmar Transferencia'}
+                            </button>
+                        </div>
+                    </div>
+                )}
+
                 {/* Modal Solicitar Anulación de Venta */}
                 {showSolicitarAnulacionModal && (
                     <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[999]">
@@ -6056,7 +6817,7 @@ const AdminDashboard = () => {
                                     </select>
                                 </div>
                                 <div className="grid grid-cols-2 gap-3">
-                                    <input type="number" placeholder="Monto ($)" className="bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-white focus:border-fire outline-none text-xs" value={costoForm.monto} onChange={(e) => setCostoForm(f => ({ ...f, monto: e.target.value }))} />
+                                    <NumericInput placeholder="Monto ($)" className="bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-white focus:border-fire outline-none text-xs" value={costoForm.monto} onChange={(val) => setCostoForm(f => ({ ...f, monto: val }))} />
                                     <select className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-white text-xs focus:border-fire outline-none" value={costoForm.periodicidad} onChange={(e) => setCostoForm(f => ({ ...f, periodicidad: e.target.value }))}>
                                         <option value="DIARIO">Diario</option>
                                         <option value="SEMANAL">Semanal</option>
@@ -6075,6 +6836,42 @@ const AdminDashboard = () => {
                                 {actionLoading ? 'Guardando...' : editingCosto ? 'Actualizar Costo' : 'Crear Costo'}
                             </button>
                         </div>
+                    </div>
+                )}
+
+                {activeTab === 'inventario' && inventarioSubTab === 'mermas' && (
+                    <div className="space-y-6 pt-2 font-sans">
+                        <SectionHeader
+                            title="Historial de Mermas"
+                            subtitle="Registro de insumos dados de baja o perdidos"
+                            icon={TrendingDown}
+                        />
+                        {mermasLoading ? (
+                            <div className="p-10 text-center text-zinc-500 animate-pulse">Cargando mermas...</div>
+                        ) : mermasList.length === 0 ? (
+                            <div className="bg-zinc-900 border border-zinc-800/60 rounded-2xl p-8 text-center text-zinc-500 text-sm">
+                                No se han registrado mermas
+                            </div>
+                        ) : (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                {mermasList.map(merma => (
+                                    <div key={merma.id} className="bg-zinc-900 border border-zinc-800/60 rounded-2xl p-4 shadow-sm hover:border-zinc-700 transition-colors">
+                                        <div className="flex justify-between items-start mb-2">
+                                            <h4 className="font-bold text-zinc-100">{merma.insumos?.nombre}</h4>
+                                            <span className="text-xs font-mono font-bold text-red-400 bg-red-950/30 px-2 py-0.5 rounded-md border border-red-900/30">
+                                                - {merma.cantidad} {merma.insumos?.unidad_medida}
+                                            </span>
+                                        </div>
+                                        <div className="text-sm text-zinc-400">
+                                            <p><span className="font-semibold">Motivo:</span> {merma.motivo || 'No especificado'}</p>
+                                            <p className="text-xs mt-2 text-zinc-500">
+                                                {new Date(merma.created_at).toLocaleString('es-CO')}
+                                            </p>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
                 )}
 

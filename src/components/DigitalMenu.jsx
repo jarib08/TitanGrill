@@ -30,7 +30,7 @@ const DigitalMenu = () => {
     const [formError, setFormError] = useState('');
 
     // Business WhatsApp Phone Number (Colombia +57)
-    const BUSINESS_WHATSAPP = '573012000092';
+    const BUSINESS_WHATSAPP = '573004126441';
 
     useEffect(() => {
         fetchProducts();
@@ -209,8 +209,8 @@ const DigitalMenu = () => {
                             key={cat}
                             onClick={() => setSelectedCategory(cat)}
                             className={`px-4 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${selectedCategory === cat
-                                    ? 'bg-fire text-white shadow-lg shadow-fire/20'
-                                    : 'bg-zinc-950 border border-zinc-800 text-zinc-400 hover:text-white'
+                                ? 'bg-fire text-white shadow-lg shadow-fire/20'
+                                : 'bg-zinc-950 border border-zinc-800 text-zinc-400 hover:text-white'
                                 }`}
                         >
                             {cat}
@@ -381,8 +381,8 @@ const DigitalMenu = () => {
                                                 type="button"
                                                 onClick={() => setDeliveryType(type.id)}
                                                 className={`py-2 rounded-xl border text-[11px] font-bold flex flex-col items-center gap-1 transition-all ${deliveryType === type.id
-                                                        ? 'border-fire bg-fire/15 text-white shadow-md'
-                                                        : 'border-zinc-800 bg-zinc-950 text-zinc-400 hover:text-white'
+                                                    ? 'border-fire bg-fire/15 text-white shadow-md'
+                                                    : 'border-zinc-800 bg-zinc-950 text-zinc-400 hover:text-white'
                                                     }`}
                                             >
                                                 <IconComp size={14} />
