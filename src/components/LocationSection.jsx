@@ -26,7 +26,7 @@ export const LocationMap = () => {
                             src="https://www.google.com/maps?q=11.22452920058084,-74.18687076981672&z=17&output=embed"
                             width="100%"
                             height="100%"
-                            style={{ border: "0" }}
+                            style={{ border: "0", filter: 'invert(90%) hue-rotate(180deg) contrast(100%)' }}
                             loading="lazy"
                             allowfullscreen
                         ></iframe>
@@ -40,14 +40,9 @@ export const LocationMap = () => {
                     </h2>
                     <div className="space-y-4">
                         <div className="flex justify-between items-center border-b border-zinc-800 pb-2">
-                            <span className="text-zinc-500">Lunes</span>
+                            <span className="text-zinc-500">Lunes a viernes</span>
                             <span className="text-zinc-200 font-semibold">4:00 PM - 9:30 PM</span>
                         </div>
-                        <div className="flex justify-between items-center pb-2">
-                            <span className="text-zinc-500">Miercoles - Viernes</span>
-                            <span className="text-zinc-200 font-semibold">4:00 PM - 9:30 PM</span>
-                        </div>
-
                     </div>
                     <div className="mt-8 pt-4 border-t border-zinc-800 text-center">
                         <p className="text-fire font-medium animate-pulse">¡Hapy Hour Miercoles 6 PM - 9 PM!</p>

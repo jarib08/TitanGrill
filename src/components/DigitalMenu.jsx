@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { ShoppingBag, Search, Plus, Minus, Trash2, ArrowLeft, CheckCircle2, Flame, MapPin, Phone, User, MessageSquare, Utensils } from 'lucide-react';
+import { ShoppingBag, Search, Plus, Minus, Trash2, ArrowLeft, CheckCircle2, Flame, MapPin, Phone, User, MessageSquare, Utensils, Store, School } from 'lucide-react';
 
 const DEFAULT_MENU_PRODUCTS = [
     { id: '5d362b34-199b-4650-a323-b4c84a6d65e3', nombre: 'Burger Classic', categoria: 'Hamburguesas', precio: 14000, descripcion: '120g carne premium, pan artesanal de papa, tocineta, lechuga, cebolla caramelizada.', activo: true, imagen: '/menu/Hamburguesa.png' },
@@ -22,10 +22,12 @@ const DigitalMenu = () => {
     const [showCartModal, setShowCartModal] = useState(false);
 
     // Checkout Form
-    const [deliveryType, setDeliveryType] = useState('Domicilio'); // Domicilio, Para Llevar, En Mesa
+    const [deliveryType, setDeliveryType] = useState('Domicilio'); // Domicilio, Recoger, Dentro_U
+    const [pickupMode, setPickupMode] = useState('Para llevar');
     const [customerName, setCustomerName] = useState('');
     const [customerPhone, setCustomerPhone] = useState('');
     const [deliveryAddress, setDeliveryAddress] = useState('');
+    const [universityLocation, setUniversityLocation] = useState('');
     const [orderNotes, setOrderNotes] = useState('');
     const [formError, setFormError] = useState('');
 
@@ -125,8 +127,14 @@ const DigitalMenu = () => {
             setFormError('Por favor ingresa tu número de teléfono / WhatsApp.');
             return;
         }
-        if (!deliveryAddress.trim()) {
-            setFormError(deliveryType === 'En Mesa' ? 'Por favor especifica el número de mesa.' : 'Por favor ingresa tu dirección de entrega.');
+
+        if (deliveryType === 'Domicilio' && !deliveryAddress.trim()) {
+            setFormError('Por favor ingresa tu dirección de entrega.');
+            return;
+        }
+
+        if (deliveryType === 'Dentro_U' && !universityLocation.trim()) {
+            setFormError('Por favor indica dónde estás dentro de la U.');
             return;
         }
 
@@ -135,8 +143,21 @@ const DigitalMenu = () => {
         message += `----------------------------------\n`;
         message += `👤 *Cliente:* ${customerName.trim()}\n`;
         message += `📞 *Teléfono:* ${customerPhone.trim()}\n`;
-        message += `📍 *Modalidad:* ${deliveryType}\n`;
-        message += `📌 *Ubicación/Mesa:* ${deliveryAddress.trim()}\n`;
+
+        let displayType = '';
+        if (deliveryType === 'Domicilio') displayType = 'Domicilio — fuera de la U';
+        else if (deliveryType === 'Recoger') displayType = 'Yo paso por el';
+        else if (deliveryType === 'Dentro_U') displayType = 'Dentro de la U';
+
+        message += `📍 *Tipo de entrega:* ${displayType}\n`;
+
+        if (deliveryType === 'Domicilio') {
+            message += `📌 *Dirección:* ${deliveryAddress.trim()}\n`;
+        } else if (deliveryType === 'Recoger') {
+            message += `📌 *Modalidad:* ${pickupMode}\n`;
+        } else if (deliveryType === 'Dentro_U') {
+            message += `📌 *Ubicación:* ${universityLocation.trim()}\n`;
+        }
 
         if (orderNotes.trim()) {
             message += `📝 *Notas:* ${orderNotes.trim()}\n`;
@@ -370,9 +391,9 @@ const DigitalMenu = () => {
                                 <label className="text-[10px] font-bold uppercase text-zinc-400 block mb-1">Tipo de Entrega *</label>
                                 <div className="grid grid-cols-3 gap-2">
                                     {[
-                                        { id: 'Domicilio', icon: MapPin },
-                                        { id: 'Para Llevar', icon: ShoppingBag },
-                                        { id: 'En Mesa', icon: Utensils }
+                                        { id: 'Domicilio', label: 'Domicilio\nfuera de la U', icon: MapPin },
+                                        { id: 'Recoger', label: 'Yo paso\npor el', icon: Store },
+                                        { id: 'Dentro_U', label: 'Dentro\nde la U', icon: School }
                                     ].map(type => {
                                         const IconComp = type.icon;
                                         return (
@@ -380,13 +401,13 @@ const DigitalMenu = () => {
                                                 key={type.id}
                                                 type="button"
                                                 onClick={() => setDeliveryType(type.id)}
-                                                className={`py-2 rounded-xl border text-[11px] font-bold flex flex-col items-center gap-1 transition-all ${deliveryType === type.id
+                                                className={`py-2 px-1 rounded-xl border text-[10px] font-bold flex flex-col items-center justify-center text-center gap-1 transition-all ${deliveryType === type.id
                                                     ? 'border-fire bg-fire/15 text-white shadow-md'
                                                     : 'border-zinc-800 bg-zinc-950 text-zinc-400 hover:text-white'
                                                     }`}
                                             >
-                                                <IconComp size={14} />
-                                                {type.id}
+                                                <IconComp size={16} />
+                                                <span className="whitespace-pre-line leading-tight">{type.label}</span>
                                             </button>
                                         );
                                     })}
@@ -416,18 +437,53 @@ const DigitalMenu = () => {
                                 </div>
                             </div>
 
-                            <div>
-                                <label className="text-[10px] font-bold uppercase text-zinc-400 block mb-1">
-                                    {deliveryType === 'En Mesa' ? 'Número de Mesa *' : 'Dirección de Entrega *'}
-                                </label>
-                                <input
-                                    type="text"
-                                    className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-white outline-none focus:border-fire"
-                                    placeholder={deliveryType === 'En Mesa' ? 'Ej. Mesa 4' : 'Ej. Calle 10 # 5-20, Apto 301'}
-                                    value={deliveryAddress}
-                                    onChange={e => setDeliveryAddress(e.target.value)}
-                                />
-                            </div>
+                            {deliveryType === 'Domicilio' && (
+                                <div>
+                                    <label className="text-[10px] font-bold uppercase text-zinc-400 block mb-1">Dirección de Entrega *</label>
+                                    <input
+                                        type="text"
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-white outline-none focus:border-fire"
+                                        placeholder="Ej. Calle 10 # 5-20, Apto 301"
+                                        value={deliveryAddress}
+                                        onChange={e => setDeliveryAddress(e.target.value)}
+                                    />
+                                </div>
+                            )}
+
+                            {deliveryType === 'Recoger' && (
+                                <div>
+                                    <label className="text-[10px] font-bold uppercase text-zinc-400 block mb-1">¿Cómo lo quieres? *</label>
+                                    <div className="flex gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => setPickupMode('Para llevar')}
+                                            className={`flex-1 py-2 rounded-lg border text-xs font-bold transition-all ${pickupMode === 'Para llevar' ? 'border-fire bg-fire/15 text-white' : 'border-zinc-800 bg-zinc-950 text-zinc-400'}`}
+                                        >
+                                            Para llevar
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setPickupMode('Para comer en el stand')}
+                                            className={`flex-1 py-2 rounded-lg border text-xs font-bold transition-all ${pickupMode === 'Para comer en el stand' ? 'border-fire bg-fire/15 text-white' : 'border-zinc-800 bg-zinc-950 text-zinc-400'}`}
+                                        >
+                                            En el stand
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+
+                            {deliveryType === 'Dentro_U' && (
+                                <div>
+                                    <label className="text-[10px] font-bold uppercase text-zinc-400 block mb-1">¿Dónde estás dentro de la U? *</label>
+                                    <input
+                                        type="text"
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-white outline-none focus:border-fire"
+                                        placeholder="Ej. Bloque 5, curso 302 o Edificio de Ingeniería"
+                                        value={universityLocation}
+                                        onChange={e => setUniversityLocation(e.target.value)}
+                                    />
+                                </div>
+                            )}
 
                             <div>
                                 <label className="text-[10px] font-bold uppercase text-zinc-400 block mb-1">Notas Especiales</label>

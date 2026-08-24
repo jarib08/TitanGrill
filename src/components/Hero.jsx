@@ -5,7 +5,7 @@ import { Link } from 'react-router-dom';
 
 const Hero = () => {
     const scrollToMenu = () => {
-        const menuSection = document.getElementById('digital-menu');
+        const menuSection = document.getElementById('menu');
         if (menuSection) {
             menuSection.scrollIntoView({ behavior: 'smooth' });
         }
