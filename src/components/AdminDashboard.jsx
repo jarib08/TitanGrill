@@ -9,6 +9,51 @@ import { SectionHeader } from './ui/SectionHeader.jsx';
 import { ErrorBanner } from './ui/ErrorBanner.jsx';
 import Pagination from './ui/Pagination.jsx';
 
+// ── Constantes de conversión de unidades ─────────────────────────────────────
+const UNIT_CONVERSIONS = {
+    'kilogramo': { to: 'gramo', factor: 1000 },
+    'litro': { to: 'mililitro', factor: 1000 },
+};
+
+const COMPATIBLE_UNITS = {
+    'gramo': ['gramo', 'kilogramo'],
+    'kilogramo': ['gramo', 'kilogramo'],
+    'mililitro': ['mililitro', 'litro'],
+    'litro': ['mililitro', 'litro'],
+    'unidad': ['unidad'],
+    'porción': ['porción'],
+};
+
+const PURCHASE_UNIT_OPTIONS = {
+    'gramo': [{ value: 'gramo', label: 'Gramos (g)' }, { value: 'kilogramo', label: 'Kilogramos (kg)' }],
+    'kilogramo': [{ value: 'gramo', label: 'Gramos (g)' }, { value: 'kilogramo', label: 'Kilogramos (kg)' }],
+    'mililitro': [{ value: 'mililitro', label: 'Mililitros (ml)' }, { value: 'litro', label: 'Litros (L)' }],
+    'litro': [{ value: 'mililitro', label: 'Mililitros (ml)' }, { value: 'litro', label: 'Litros (L)' }],
+    'unidad': [{ value: 'unidad', label: 'Unidades' }],
+    'porción': [{ value: 'porción', label: 'Porciones' }],
+};
+
+function calcularCostoUnitarioDesdeCompra(precioTotal, contenido, unidadCompra, unidadBase) {
+    if (!precioTotal || !contenido || contenido <= 0 || precioTotal <= 0) return { costoUnitario: 0, cantidadBase: 0, error: null };
+    const compatibles = COMPATIBLE_UNITS[unidadBase] || [unidadBase];
+    if (!compatibles.includes(unidadCompra)) {
+        return { costoUnitario: 0, cantidadBase: 0, error: `Unidad incompatible: ${unidadCompra} → ${unidadBase}` };
+    }
+    let cantidadBase = contenido;
+    const conv = UNIT_CONVERSIONS[unidadCompra];
+    if (conv && conv.to === unidadBase) {
+        cantidadBase = contenido * conv.factor;
+    }
+    // If purchase unit IS the base unit, no conversion needed
+    // If purchase unit converts TO base unit, conversion already applied above
+    // If base unit converts TO purchase unit (e.g. base=kilogramo, compra=gramo) → divide
+    const convReverse = UNIT_CONVERSIONS[unidadBase];
+    if (convReverse && convReverse.to === unidadCompra) {
+        cantidadBase = contenido / convReverse.factor;
+    }
+    return { costoUnitario: precioTotal / cantidadBase, cantidadBase, error: null };
+}
+
 const AdminDashboard = () => {
     const navigate = useNavigate();
     const [stats, setStats] = useState({
@@ -92,6 +137,15 @@ const AdminDashboard = () => {
     const [mermaForm, setMermaForm] = useState({ cantidad: '', motivo: '', advertencia: false });
     const [mermaSaving, setMermaSaving] = useState(false);
 
+    // Caja operations — Saldo Inicial, Movimiento Manual, Resolver Diferencia
+    const [showSaldoInicialModal, setShowSaldoInicialModal] = useState(false);
+    const [saldoInicialForm, setSaldoInicialForm] = useState({ efectivo: 0, nequi: 0, bancolombia: 0 });
+    const [showMovManualModal, setShowMovManualModal] = useState(null); // 'INGRESO_MANUAL' | 'RETIRO' | null
+    const [movManualForm, setMovManualForm] = useState({ monto: 0, metodo_pago: 'EFECTIVO', descripcion: '' });
+    const [showResolverDifModal, setShowResolverDifModal] = useState(null); // sesion object
+    const [resolverDifForm, setResolverDifForm] = useState({ metodo_pago: 'EFECTIVO', monto: 0, tipo: 'FALTANTE', motivo: '' });
+    const [saldoGlobal, setSaldoGlobal] = useState({ efectivo: 0, nequi: 0, bancolombia: 0 });
+
     // Inventario UX — búsqueda, filtros, detalle
     const [insumoSearch, setInsumoSearch] = useState('');
     const [insumoFilter, setInsumoFilter] = useState('todos'); // 'todos' | 'bajos' | 'agotados'
@@ -112,7 +166,7 @@ const AdminDashboard = () => {
     const [proveedorForm, setProveedorForm] = useState({ nombre: '', telefono: '', contacto: '', activo: true });
     const [editingCompra, setEditingCompra] = useState(null); // null or 'new'
     const [compraForm, setCompraForm] = useState({ proveedor_id: '', observaciones: '', details: [], metodo_pago: 'EFECTIVO' });
-    const [selectedDetail, setSelectedDetail] = useState({ insumo_id: '', cantidad: 1, costo_unitario: 0 });
+    const [selectedDetail, setSelectedDetail] = useState({ insumo_id: '', precio_total_pagado: '', contenido_comprado: '', unidad_compra: '', cantidad: 0, costo_unitario: 0 });
     const [compraInsumoSearch, setCompraInsumoSearch] = useState(''); // P0: búsqueda de insumo en compras
     const [showAnularModal, setShowAnularModal] = useState(null); // compra object
     const [anularMotivo, setAnularMotivo] = useState('');
@@ -519,6 +573,7 @@ const AdminDashboard = () => {
 
     useEffect(() => {
         fetchDashboardData();
+        fetchSaldoGlobal();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
@@ -767,6 +822,102 @@ const AdminDashboard = () => {
             alert('Error al registrar transferencia: ' + err.message);
         } finally {
             setActionLoading(false);
+        }
+    };
+
+    // Caja: Registrar saldo inicial
+    const handleSaldoInicial = async () => {
+        setActionLoading(true);
+        try {
+            const { data, error } = await supabase.rpc('registrar_saldo_inicial', {
+                p_efectivo: Number(saldoInicialForm.efectivo),
+                p_nequi: Number(saldoInicialForm.nequi),
+                p_bancolombia: Number(saldoInicialForm.bancolombia)
+            });
+            if (error) throw error;
+            if (data && !data.success) throw new Error(data.message);
+            alert('\u2705 Saldo inicial registrado exitosamente');
+            setShowSaldoInicialModal(false);
+            setSaldoInicialForm({ efectivo: 0, nequi: 0, bancolombia: 0 });
+            await fetchDashboardData();
+            await fetchSaldoGlobal();
+        } catch (err) {
+            console.error(err);
+            alert('Error: ' + err.message);
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
+    // Caja: Movimiento manual (ingreso/retiro)
+    const handleMovManual = async () => {
+        const tipoOp = showMovManualModal;
+        const tipo = tipoOp === 'INGRESO_MANUAL' ? 'INGRESO' : 'EGRESO';
+        setActionLoading(true);
+        try {
+            const { data, error } = await supabase.rpc('registrar_movimiento_manual', {
+                p_tipo: tipo,
+                p_monto: Number(movManualForm.monto),
+                p_metodo_pago: movManualForm.metodo_pago,
+                p_descripcion: movManualForm.descripcion,
+                p_tipo_operacion: tipoOp
+            });
+            if (error) throw error;
+            if (data && !data.success) throw new Error(data.message);
+            alert(`\u2705 ${tipoOp === 'INGRESO_MANUAL' ? 'Ingreso' : 'Retiro'} registrado exitosamente`);
+            setShowMovManualModal(null);
+            setMovManualForm({ monto: 0, metodo_pago: 'EFECTIVO', descripcion: '' });
+            await fetchDashboardData();
+            await fetchSaldoGlobal();
+        } catch (err) {
+            console.error(err);
+            alert('Error: ' + err.message);
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
+    // Caja: Resolver diferencia
+    const handleResolverDiferencia = async () => {
+        if (!showResolverDifModal) return;
+        setActionLoading(true);
+        try {
+            const { data, error } = await supabase.rpc('resolver_diferencia_caja', {
+                p_sesion_id: showResolverDifModal.id,
+                p_metodo_pago: resolverDifForm.metodo_pago,
+                p_monto: Number(resolverDifForm.monto),
+                p_tipo: resolverDifForm.tipo,
+                p_motivo: resolverDifForm.motivo
+            });
+            if (error) throw error;
+            if (data && !data.success) throw new Error(data.message);
+            alert('\u2705 Diferencia resuelta y registrada');
+            setShowResolverDifModal(null);
+            setResolverDifForm({ metodo_pago: 'EFECTIVO', monto: 0, tipo: 'FALTANTE', motivo: '' });
+            await fetchDashboardData();
+            await fetchSaldoGlobal();
+        } catch (err) {
+            console.error(err);
+            alert('Error: ' + err.message);
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
+    // Caja: Fetch saldo global (sin filtro de fecha)
+    const fetchSaldoGlobal = async () => {
+        try {
+            const { data, error } = await supabase.rpc('calcular_saldo_global');
+            if (error) throw error;
+            if (data && data.success) {
+                setSaldoGlobal({
+                    efectivo: Number(data.efectivo || 0),
+                    nequi: Number(data.nequi || 0),
+                    bancolombia: Number(data.bancolombia || 0)
+                });
+            }
+        } catch (err) {
+            console.error('Error fetching saldo global:', err);
         }
     };
 
@@ -1083,7 +1234,7 @@ const AdminDashboard = () => {
 
             const { data: rec, error: recErr } = await supabase
                 .from('producto_insumos')
-                .select('*, productos(nombre), insumos(nombre, unidad_medida)');
+                .select('*, productos(nombre, precio), insumos(nombre, unidad_medida, costo_unitario)');
             if (recErr) throw recErr;
             setRecetasList(rec || []);
         } catch (err) {
@@ -1436,12 +1587,25 @@ const AdminDashboard = () => {
     };
 
     const handleAddCompraDetail = () => {
-        if (!selectedDetail.insumo_id || !selectedDetail.cantidad || selectedDetail.costo_unitario < 0) {
-            alert('Seleccione un insumo y proporcione cantidad y costo unitario válidos.');
+        if (!selectedDetail.insumo_id) {
+            alert('Seleccione un insumo.');
             return;
         }
         const insumoObj = insumosList.find(i => i.id === selectedDetail.insumo_id);
-        const subtotal = Number(selectedDetail.cantidad) * Number(selectedDetail.costo_unitario);
+        if (!insumoObj) { alert('Insumo no encontrado.'); return; }
+
+        const precioTotal = Number(selectedDetail.precio_total_pagado);
+        const contenido = Number(selectedDetail.contenido_comprado);
+        const unidadCompra = selectedDetail.unidad_compra || insumoObj.unidad_medida;
+        const unidadBase = insumoObj.unidad_medida;
+
+        if (!precioTotal || precioTotal <= 0) { alert('Ingrese un precio total válido mayor a 0.'); return; }
+        if (!contenido || contenido <= 0) { alert('Ingrese un contenido comprado válido mayor a 0.'); return; }
+
+        const { costoUnitario, cantidadBase, error } = calcularCostoUnitarioDesdeCompra(precioTotal, contenido, unidadCompra, unidadBase);
+        if (error) { alert(error); return; }
+
+        const subtotal = precioTotal; // subtotal = precio total pagado por este ítem
 
         setCompraForm(p => ({
             ...p,
@@ -1449,14 +1613,20 @@ const AdminDashboard = () => {
                 ...p.details,
                 {
                     insumo_id: selectedDetail.insumo_id,
-                    nombre: insumoObj?.nombre || 'Desconocido',
-                    cantidad: Number(selectedDetail.cantidad),
-                    costo_unitario: Number(selectedDetail.costo_unitario),
-                    subtotal
+                    nombre: insumoObj.nombre,
+                    cantidad: cantidadBase, // cantidad en unidad base del insumo
+                    costo_unitario: costoUnitario,
+                    subtotal,
+                    // Campos nuevos para trazabilidad
+                    precio_total_pagado: precioTotal,
+                    contenido_comprado: contenido,
+                    unidad_compra: unidadCompra,
+                    unidad_base: unidadBase
                 }
             ]
         }));
-        setSelectedDetail({ insumo_id: '', cantidad: 1, costo_unitario: 0 });
+        setSelectedDetail({ insumo_id: '', precio_total_pagado: '', contenido_comprado: '', unidad_compra: '', cantidad: 0, costo_unitario: 0 });
+        setCompraInsumoSearch('');
     };
 
     const handleRemoveCompraDetail = (index) => {
@@ -1501,7 +1671,10 @@ const AdminDashboard = () => {
                 insumo_id: item.insumo_id,
                 cantidad: item.cantidad,
                 costo_unitario: item.costo_unitario,
-                subtotal: item.subtotal
+                subtotal: item.subtotal,
+                precio_total_pagado: item.precio_total_pagado || null,
+                contenido_comprado: item.contenido_comprado || null,
+                unidad_compra: item.unidad_compra || null
             }));
 
             const { error: detErr } = await supabase
@@ -1523,7 +1696,7 @@ const AdminDashboard = () => {
 
             setEditingCompra(null);
             setCompraForm({ proveedor_id: '', observaciones: '', details: [], metodo_pago: 'EFECTIVO' });
-            setSelectedDetail({ insumo_id: '', cantidad: 1, costo_unitario: 0 });
+            setSelectedDetail({ insumo_id: '', precio_total_pagado: '', contenido_comprado: '', unidad_compra: '', cantidad: 0, costo_unitario: 0 });
             setCompraInsumoSearch('');
             await fetchCompras();
             await fetchInventario();
@@ -1929,7 +2102,7 @@ const AdminDashboard = () => {
                         className="bg-gradient-to-r from-orange-600 to-fire text-white px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 shadow-lg shadow-fire/25 border border-fire/40 active:scale-95 transition-all"
                     >
                         <ShoppingBag size={14} />
-                        🔥 POS
+                        POS
                     </Link>
 
                     <button
@@ -2774,12 +2947,13 @@ const AdminDashboard = () => {
                                                     <th className="p-3">Apertura</th>
                                                     <th className="p-3">Estado</th>
                                                     <th className="p-3 text-right">Diferencia</th>
+                                                    <th className="p-3 text-center">Acciones</th>
                                                 </tr>
                                             </thead>
                                             <tbody className="divide-y divide-zinc-850 text-xs">
                                                 {sessionsList.length === 0 ? (
                                                     <tr>
-                                                        <td colSpan="4" className="p-6 text-center text-zinc-500">No hay sesiones en el período</td>
+                                                        <td colSpan="5" className="p-6 text-center text-zinc-500">No hay sesiones en el período</td>
                                                     </tr>
                                                 ) : (
                                                     sessionsList.slice(0, 10).map(sesion => (
@@ -2799,6 +2973,25 @@ const AdminDashboard = () => {
                                                                     ? <span className={Number(sesion.diferencia) > 0 ? 'text-red-400' : Number(sesion.diferencia) < 0 ? 'text-green-400' : 'text-zinc-400'}>${Number(sesion.diferencia || 0).toLocaleString()}</span>
                                                                     : <span className="text-zinc-600">—</span>
                                                                 }
+                                                            </td>
+                                                            <td className="p-3 text-center">
+                                                                {sesion.estado === 'CERRADA' && Number(sesion.diferencia || 0) !== 0 && (
+                                                                    <button
+                                                                        onClick={() => {
+                                                                            const dif = Number(sesion.diferencia || 0);
+                                                                            setShowResolverDifModal(sesion);
+                                                                            setResolverDifForm({
+                                                                                metodo_pago: 'EFECTIVO',
+                                                                                monto: Math.abs(dif),
+                                                                                tipo: dif < 0 ? 'FALTANTE' : 'SOBRANTE',
+                                                                                motivo: ''
+                                                                            });
+                                                                        }}
+                                                                        className="bg-amber-900/40 hover:bg-amber-800/50 text-amber-300 px-2.5 py-1 rounded-lg text-[9px] font-bold border border-amber-700/30 transition-all"
+                                                                    >
+                                                                        ⚖️ Resolver
+                                                                    </button>
+                                                                )}
                                                             </td>
                                                         </tr>
                                                     ))
@@ -3359,12 +3552,55 @@ const AdminDashboard = () => {
                                 subtitle="Seguimiento de movimientos financieros y balance de caja por cuenta oficial"
                                 icon={PiggyBank}
                             />
-                            <button
-                                onClick={() => setShowTransferModal(true)}
-                                className="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-4 py-2.5 rounded-xl text-xs font-bold border border-zinc-700 transition-all flex items-center gap-2"
-                            >
-                                🔀 Transferencia Interna
-                            </button>
+                            <div className="flex flex-wrap gap-2">
+                                <button
+                                    onClick={() => setShowSaldoInicialModal(true)}
+                                    className="bg-emerald-900/40 hover:bg-emerald-800/50 text-emerald-300 px-3 py-2 rounded-xl text-[10px] font-bold border border-emerald-700/30 transition-all flex items-center gap-1.5"
+                                >
+                                    🏁 Saldo Inicial
+                                </button>
+                                <button
+                                    onClick={() => setShowMovManualModal('INGRESO_MANUAL')}
+                                    className="bg-green-900/40 hover:bg-green-800/50 text-green-300 px-3 py-2 rounded-xl text-[10px] font-bold border border-green-700/30 transition-all flex items-center gap-1.5"
+                                >
+                                    ➕ Ingreso Manual
+                                </button>
+                                <button
+                                    onClick={() => setShowMovManualModal('RETIRO')}
+                                    className="bg-red-900/40 hover:bg-red-800/50 text-red-300 px-3 py-2 rounded-xl text-[10px] font-bold border border-red-700/30 transition-all flex items-center gap-1.5"
+                                >
+                                    💸 Retiro
+                                </button>
+                                <button
+                                    onClick={() => setShowTransferModal(true)}
+                                    className="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-3 py-2 rounded-xl text-[10px] font-bold border border-zinc-700 transition-all flex items-center gap-1.5"
+                                >
+                                    🔀 Transferencia
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Saldo Global del Negocio */}
+                        <div className="bg-gradient-to-r from-zinc-900 via-zinc-900 to-zinc-800 border border-zinc-700/50 rounded-2xl p-5 shadow-lg">
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-3">💰 Saldo Global del Negocio (Acumulado histórico)</p>
+                            <div className="grid grid-cols-3 gap-4">
+                                <div>
+                                    <p className="text-[10px] text-green-400/70 font-bold uppercase">💵 Efectivo</p>
+                                    <p className="text-xl font-bold text-green-400">${saldoGlobal.efectivo.toLocaleString()}</p>
+                                </div>
+                                <div>
+                                    <p className="text-[10px] text-pink-400/70 font-bold uppercase">📱 Nequi</p>
+                                    <p className="text-xl font-bold text-pink-400">${saldoGlobal.nequi.toLocaleString()}</p>
+                                </div>
+                                <div>
+                                    <p className="text-[10px] text-yellow-400/70 font-bold uppercase">🏦 Bancolombia</p>
+                                    <p className="text-xl font-bold text-yellow-400">${saldoGlobal.bancolombia.toLocaleString()}</p>
+                                </div>
+                            </div>
+                            <div className="mt-3 pt-3 border-t border-zinc-800">
+                                <p className="text-[10px] text-zinc-500 font-bold uppercase">Total</p>
+                                <p className="text-2xl font-bold text-white">${(saldoGlobal.efectivo + saldoGlobal.nequi + saldoGlobal.bancolombia).toLocaleString()}</p>
+                            </div>
                         </div>
 
                         {/* Financial Accounts Breakdown (Tesorería) */}
@@ -5050,6 +5286,7 @@ const AdminDashboard = () => {
                                         onClick={() => {
                                             setEditingInsumo('new');
                                             setInsumoForm({ nombre: '', unidad_medida: 'unidad', stock_actual: 0, stock_minimo: 0, activo: true, costo_unitario: 0 });
+                                            /* selectedDetail reset handled separately */
                                         }}
                                         className="flex items-center gap-2 bg-fire text-white px-4 py-2 rounded-lg text-sm font-bold shadow-lg shadow-fire/10 hover:bg-orange-700 transition-all uppercase tracking-wider"
                                     >
@@ -5350,6 +5587,59 @@ const AdminDashboard = () => {
                         {/* Sub-tab: Recetas — Fase 2 Bloque 7 */}
                         {inventarioSubTab === 'recetas' && (
                             <div className="space-y-4 pt-2">
+                                {/* Configuración Global de Pricing (Solo Socios) */}
+                                {currentUserProfile?.es_socio && (() => {
+                                    const multiConfig = costosList.find(c => c.tipo_costo === 'MULTIPLICADOR');
+                                    const impConfig = costosList.find(c => c.tipo_costo === 'IMPUESTO');
+                                    return (
+                                        <details className="bg-zinc-900 border border-zinc-800/60 rounded-2xl overflow-hidden">
+                                            <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-zinc-800/30 transition-colors list-none [&::-webkit-details-marker]:hidden">
+                                                <div className="flex items-center gap-2">
+                                                    <Settings size={16} className="text-fire" />
+                                                    <span className="font-bold text-xs uppercase tracking-wider text-zinc-300">Configuración de Precios</span>
+                                                </div>
+                                                <ChevronDown size={14} className="text-zinc-500" />
+                                            </summary>
+                                            <div className="p-4 pt-2 border-t border-zinc-850 bg-zinc-950/40">
+                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                                    <div>
+                                                        <label className="text-[10px] uppercase tracking-wider font-bold text-zinc-400 block mb-1.5">Multiplicador de Precio</label>
+                                                        <NumericInput
+                                                            allowDecimals
+                                                            className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm text-white focus:border-fire outline-none font-mono"
+                                                            value={multiConfig?.monto ?? 2}
+                                                            onChange={async (val) => {
+                                                                if (multiConfig) {
+                                                                    await supabase.from('costos_configuracion').update({ monto: Number(val), updated_at: new Date().toISOString() }).eq('id', multiConfig.id);
+                                                                    const { data } = await supabase.from('costos_configuracion').select('*').order('tipo_costo', { ascending: true });
+                                                                    setCostosList(data || []);
+                                                                }
+                                                            }}
+                                                        />
+                                                        <p className="text-[9px] text-zinc-600 mt-1">Ej: 2 = precio sugerido será 2× el costo</p>
+                                                    </div>
+                                                    <div>
+                                                        <label className="text-[10px] uppercase tracking-wider font-bold text-zinc-400 block mb-1.5">Impuesto / IPC (%)</label>
+                                                        <NumericInput
+                                                            allowDecimals
+                                                            className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm text-white focus:border-fire outline-none font-mono"
+                                                            value={impConfig?.monto ?? 8}
+                                                            onChange={async (val) => {
+                                                                if (impConfig) {
+                                                                    await supabase.from('costos_configuracion').update({ monto: Number(val), updated_at: new Date().toISOString() }).eq('id', impConfig.id);
+                                                                    const { data } = await supabase.from('costos_configuracion').select('*').order('tipo_costo', { ascending: true });
+                                                                    setCostosList(data || []);
+                                                                }
+                                                            }}
+                                                        />
+                                                        <p className="text-[9px] text-zinc-600 mt-1">Ej: 8 = se aplica 8% de impuesto al precio sugerido</p>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </details>
+                                    );
+                                })()}
+
                                 {/* Recetas (Recipes) Panel — B1: Rediseño mobile-first (Tarjetas y agrupamiento por producto) */}
                                 <div className="space-y-4">
                                     <div className="flex items-center justify-between">
@@ -5429,7 +5719,24 @@ const AdminDashboard = () => {
                                                 );
                                             }
 
-                                            return entries.map(([prodName, recs]) => (
+                                            // Configuración global de pricing
+                                            const multiplicadorGlobal = Number(costosList.find(c => c.tipo_costo === 'MULTIPLICADOR')?.monto || 2);
+                                            const impuestoGlobal = Number(costosList.find(c => c.tipo_costo === 'IMPUESTO')?.monto || 8);
+
+                                            return entries.map(([prodName, recs]) => {
+                                                // Calcular costos de la receta
+                                                const costoStandardTotal = recs.reduce((sum, rec) => {
+                                                    const costoUnit = Number(rec.insumos?.costo_unitario || 0);
+                                                    return sum + (Number(rec.cantidad_por_unidad) * costoUnit);
+                                                }, 0);
+                                                const costoPorcion = costoStandardTotal; // Porciones = 1
+                                                const precioSugSinImp = costoPorcion * multiplicadorGlobal;
+                                                const precioSugConImp = precioSugSinImp * (1 + impuestoGlobal / 100);
+                                                const precioAprobado = Number(recs[0]?.productos?.precio || 0);
+                                                const margenCosto = precioAprobado > 0 ? (costoPorcion / precioAprobado) * 100 : 0;
+                                                const margenRentabilidad = precioAprobado > 0 ? 100 - margenCosto : 0;
+
+                                                return (
                                                 <details key={prodName} className="bg-zinc-900 border border-zinc-800/60 rounded-2xl overflow-hidden shadow-sm group">
                                                     <summary className="p-4 bg-zinc-950/40 cursor-pointer flex items-center justify-between hover:bg-zinc-800/30 transition-colors list-none [&::-webkit-details-marker]:hidden">
                                                         <div className="flex items-center gap-2">
@@ -5440,11 +5747,77 @@ const AdminDashboard = () => {
                                                             {recs.length} insumo{recs.length !== 1 ? 's' : ''}
                                                         </span>
                                                     </summary>
+
+                                                    {/* ── Bloque COSTOS Y RENTABILIDAD ── */}
+                                                    <details className="border-t border-zinc-850">
+                                                        <summary className="p-3 px-4 cursor-pointer flex items-center justify-between text-sm hover:bg-zinc-800/30 transition-colors list-none [&::-webkit-details-marker]:hidden">
+                                                            <div className="flex items-center gap-2">
+                                                                <TrendingUp size={14} className="text-fire" />
+                                                                <span className="font-bold text-fire text-[10px] uppercase tracking-wider">Costos y Rentabilidad</span>
+                                                            </div>
+                                                            <ChevronDown size={12} className="text-zinc-500" />
+                                                        </summary>
+                                                        <div className="px-4 pb-4 pt-1 bg-zinc-950/40 space-y-1.5">
+                                                            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+                                                                <span className="text-zinc-400">Costo Standard Total</span>
+                                                                <span className="text-right font-mono font-bold text-white">${Math.round(costoStandardTotal).toLocaleString()}</span>
+
+                                                                <span className="text-zinc-400">Costo Standard / Porción</span>
+                                                                <span className="text-right font-mono font-bold text-white">${Math.round(costoPorcion).toLocaleString()}</span>
+
+                                                                <span className="col-span-2 border-t border-zinc-800 my-0.5" />
+
+                                                                <span className="text-zinc-400">Precio Sug. sin Impuesto <span className="text-zinc-600">(×{multiplicadorGlobal})</span></span>
+                                                                <span className="text-right font-mono text-zinc-300">${Math.round(precioSugSinImp).toLocaleString()}</span>
+
+                                                                <span className="text-zinc-400">Precio Sug. con Impuesto <span className="text-zinc-600">(+{impuestoGlobal}%)</span></span>
+                                                                <span className="text-right font-mono text-zinc-300">${Math.round(precioSugConImp).toLocaleString()}</span>
+
+                                                                <span className="col-span-2 border-t border-zinc-800 my-0.5" />
+
+                                                                <span className="text-zinc-400 font-semibold">Precio Aprobado</span>
+                                                                {currentUserProfile?.es_socio ? (
+                                                                    <div className="flex items-center justify-end gap-1.5">
+                                                                        <span className="text-green-400 text-[10px]">$</span>
+                                                                        <NumericInput
+                                                                            className="w-24 bg-zinc-900 border border-green-900/40 rounded-lg px-2 py-1 text-xs text-green-400 font-mono font-bold text-right focus:border-green-500 outline-none"
+                                                                            value={precioAprobado}
+                                                                            onChange={async (val) => {
+                                                                                const prodId = recs[0]?.producto_id;
+                                                                                if (!prodId || Number(val) < 0) return;
+                                                                                await supabase.from('productos').update({ precio: Number(val) }).eq('id', prodId);
+                                                                                await fetchInventario();
+                                                                                await fetchProductos();
+                                                                            }}
+                                                                        />
+                                                                        <Pencil size={10} className="text-green-600" />
+                                                                    </div>
+                                                                ) : (
+                                                                    <span className="text-right font-mono font-bold text-green-400">${precioAprobado.toLocaleString()}</span>
+                                                                )}
+
+                                                                <span className="col-span-2 border-t border-zinc-800 my-0.5" />
+
+                                                                <span className="text-zinc-400">Margen de Costo</span>
+                                                                <span className={`text-right font-mono font-bold ${margenCosto > 50 ? 'text-red-400' : margenCosto > 35 ? 'text-orange-400' : 'text-green-400'}`}>{margenCosto.toFixed(2)}%</span>
+
+                                                                <span className="text-zinc-400">Margen de Rentabilidad</span>
+                                                                <span className={`text-right font-mono font-bold ${margenRentabilidad < 50 ? 'text-red-400' : margenRentabilidad < 65 ? 'text-orange-400' : 'text-green-400'}`}>{margenRentabilidad.toFixed(2)}%</span>
+                                                            </div>
+                                                            {costoStandardTotal === 0 && (
+                                                                <p className="text-[9px] text-orange-400 mt-2">⚠️ Algunos insumos tienen costo $0 — los cálculos pueden no reflejar costos reales.</p>
+                                                            )}
+                                                        </div>
+                                                    </details>
+
                                                     <div className="divide-y divide-zinc-850 text-sm border-t border-zinc-850 bg-zinc-900/50">
                                                         {recs.map(rec => (
                                                             <div key={rec.id} className="p-3 px-4 flex items-center justify-between gap-3 hover:bg-zinc-850/50 transition-colors">
                                                                 <div className="min-w-0">
                                                                     <p className="font-medium text-zinc-300 truncate">{rec.insumos?.nombre}</p>
+                                                                    {rec.insumos?.costo_unitario > 0 && (
+                                                                        <p className="text-[10px] text-zinc-500 font-mono">${Math.round(Number(rec.cantidad_por_unidad) * Number(rec.insumos.costo_unitario)).toLocaleString()}</p>
+                                                                    )}
                                                                 </div>
                                                                 <div className="flex items-center gap-4 shrink-0">
                                                                     {editingRecetaInline === rec.id ? (
@@ -5498,7 +5871,7 @@ const AdminDashboard = () => {
                                                         ))}
                                                     </div>
                                                 </details>
-                                            ));
+                                            ); });
                                         })()}
                                     </div>
                                 </div>
@@ -5923,30 +6296,68 @@ const AdminDashboard = () => {
                                             )}
                                         </div>
                                         <div>
-                                            <label className="text-[9px] uppercase tracking-wider font-bold text-zinc-500 block mb-1">Cantidad</label>
+                                            <label className="text-[9px] uppercase tracking-wider font-bold text-zinc-500 block mb-1">Precio Total Pagado ($)</label>
                                             <NumericInput
                                                 allowDecimals
                                                 className="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-white focus:border-fire outline-none font-mono"
-                                                value={selectedDetail.cantidad}
-                                                onChange={val => setSelectedDetail(p => ({ ...p, cantidad: val }))}
+                                                value={selectedDetail.precio_total_pagado}
+                                                onChange={val => setSelectedDetail(p => ({ ...p, precio_total_pagado: val }))}
                                             />
                                         </div>
-                                        <div>
-                                            <label className="text-[9px] uppercase tracking-wider font-bold text-zinc-500 block mb-1">Costo Unitario ($)</label>
-                                            <div className="flex gap-2">
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <div>
+                                                <label className="text-[9px] uppercase tracking-wider font-bold text-zinc-500 block mb-1">Contenido Comprado</label>
                                                 <NumericInput
                                                     allowDecimals
                                                     className="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-white focus:border-fire outline-none font-mono"
-                                                    value={selectedDetail.costo_unitario}
-                                                    onChange={val => setSelectedDetail(p => ({ ...p, costo_unitario: val }))}
+                                                    value={selectedDetail.contenido_comprado}
+                                                    onChange={val => setSelectedDetail(p => ({ ...p, contenido_comprado: val }))}
                                                 />
-                                                <button
-                                                    onClick={handleAddCompraDetail}
-                                                    className="bg-fire text-white px-3 rounded text-xs font-bold hover:bg-orange-700 transition-colors"
-                                                >
-                                                    Agregar
-                                                </button>
                                             </div>
+                                            <div>
+                                                <label className="text-[9px] uppercase tracking-wider font-bold text-zinc-500 block mb-1">Unidad del Contenido</label>
+                                                <select
+                                                    className="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-white focus:border-fire outline-none"
+                                                    value={selectedDetail.unidad_compra}
+                                                    onChange={e => setSelectedDetail(p => ({ ...p, unidad_compra: e.target.value }))}
+                                                >
+                                                    <option value="">Seleccionar...</option>
+                                                    {(() => {
+                                                        const insumoSel = insumosList.find(i => i.id === selectedDetail.insumo_id);
+                                                        const unidadBase = insumoSel?.unidad_medida || '';
+                                                        const options = PURCHASE_UNIT_OPTIONS[unidadBase] || [{ value: unidadBase, label: unidadBase }];
+                                                        return options.map(o => <option key={o.value} value={o.value}>{o.label}</option>);
+                                                    })()}
+                                                </select>
+                                            </div>
+                                        </div>
+                                        {/* Costo Unitario Calculado — preview */}
+                                        {selectedDetail.insumo_id && Number(selectedDetail.precio_total_pagado) > 0 && Number(selectedDetail.contenido_comprado) > 0 && selectedDetail.unidad_compra && (() => {
+                                            const insumoSel = insumosList.find(i => i.id === selectedDetail.insumo_id);
+                                            const { costoUnitario, cantidadBase, error } = calcularCostoUnitarioDesdeCompra(
+                                                Number(selectedDetail.precio_total_pagado),
+                                                Number(selectedDetail.contenido_comprado),
+                                                selectedDetail.unidad_compra,
+                                                insumoSel?.unidad_medida || ''
+                                            );
+                                            if (error) return <p className="text-xs text-red-400 bg-red-950/30 border border-red-900/30 rounded-lg p-2 mt-1">❌ {error}</p>;
+                                            return (
+                                                <div className="bg-zinc-950 border border-green-900/30 rounded-lg p-2.5 mt-1 space-y-1">
+                                                    <p className="text-[9px] text-green-400 font-bold uppercase tracking-wider">✓ Costo Unitario Calculado</p>
+                                                    <p className="text-sm font-mono font-bold text-green-400">${costoUnitario.toFixed(2)} / {insumoSel?.unidad_medida}</p>
+                                                    {selectedDetail.unidad_compra !== insumoSel?.unidad_medida && (
+                                                        <p className="text-[9px] text-zinc-500">Conversión: {selectedDetail.contenido_comprado} {selectedDetail.unidad_compra} → {cantidadBase.toLocaleString()} {insumoSel?.unidad_medida}</p>
+                                                    )}
+                                                </div>
+                                            );
+                                        })()}
+                                        <div className="flex justify-end">
+                                            <button
+                                                onClick={handleAddCompraDetail}
+                                                className="bg-fire text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-orange-700 transition-colors flex items-center gap-1.5"
+                                            >
+                                                <Plus size={14} /> Agregar al Detalle
+                                            </button>
                                         </div>
                                     </div>
 
@@ -6029,7 +6440,7 @@ const AdminDashboard = () => {
                                         Guardar y Recibir (egreso {compraForm.metodo_pago})
                                     </button>
                                     <button
-                                        onClick={() => { setEditingCompra(null); setCompraInsumoSearch(''); setSelectedDetail({ insumo_id: '', cantidad: 1, costo_unitario: 0 }); }}
+                                        onClick={() => { setEditingCompra(null); setCompraInsumoSearch(''); setSelectedDetail({ insumo_id: '', precio_total_pagado: '', contenido_comprado: '', unidad_compra: '', cantidad: 0, costo_unitario: 0 }); }}
                                         className="bg-zinc-950 text-zinc-400 border border-zinc-850 px-5 py-2.5 rounded-lg text-xs font-bold hover:text-white transition-all ml-auto"
                                     >
                                         Cancelar
@@ -6739,6 +7150,145 @@ const AdminDashboard = () => {
                                 className="w-full bg-fire hover:bg-orange-700 text-white py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                                 {actionLoading ? 'Procesando...' : '✅ Confirmar Transferencia'}
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Modal Saldo Inicial */}
+                {showSaldoInicialModal && (
+                    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[999]">
+                        <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-2xl relative space-y-4 font-sans">
+                            <div className="flex justify-between items-center border-b border-zinc-800 pb-3">
+                                <h3 className="text-lg font-bold font-serif text-emerald-400">🏁 Saldo Inicial del Negocio</h3>
+                                <button onClick={() => setShowSaldoInicialModal(false)} className="text-zinc-500 hover:text-white">✕</button>
+                            </div>
+                            <p className="text-[10px] text-zinc-500">Registra el dinero que ya existe en el negocio antes de iniciar operaciones en el sistema. Solo se puede ejecutar una vez.</p>
+                            <div className="space-y-3">
+                                <div>
+                                    <label className="text-xs font-bold text-green-400/70 block mb-1">💵 Efectivo</label>
+                                    <input type="number" min={0} value={saldoInicialForm.efectivo} onChange={e => setSaldoInicialForm(p => ({ ...p, efectivo: e.target.value }))}
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-white focus:border-green-500 outline-none text-center font-bold" />
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-pink-400/70 block mb-1">📱 Nequi</label>
+                                    <input type="number" min={0} value={saldoInicialForm.nequi} onChange={e => setSaldoInicialForm(p => ({ ...p, nequi: e.target.value }))}
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-white focus:border-pink-500 outline-none text-center font-bold" />
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-yellow-400/70 block mb-1">🏦 Bancolombia</label>
+                                    <input type="number" min={0} value={saldoInicialForm.bancolombia} onChange={e => setSaldoInicialForm(p => ({ ...p, bancolombia: e.target.value }))}
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-white focus:border-yellow-500 outline-none text-center font-bold" />
+                                </div>
+                            </div>
+                            <button
+                                onClick={handleSaldoInicial}
+                                disabled={actionLoading}
+                                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all shadow-lg disabled:opacity-50"
+                            >
+                                {actionLoading ? 'Registrando...' : '✅ Registrar Saldo Inicial'}
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Modal Movimiento Manual (Ingreso / Retiro) */}
+                {showMovManualModal && (
+                    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[999]">
+                        <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-2xl relative space-y-4 font-sans">
+                            <div className="flex justify-between items-center border-b border-zinc-800 pb-3">
+                                <h3 className={`text-lg font-bold font-serif ${showMovManualModal === 'INGRESO_MANUAL' ? 'text-green-400' : 'text-red-400'}`}>
+                                    {showMovManualModal === 'INGRESO_MANUAL' ? '➕ Ingreso Manual' : '💸 Retiro de Efectivo'}
+                                </h3>
+                                <button onClick={() => setShowMovManualModal(null)} className="text-zinc-500 hover:text-white">✕</button>
+                            </div>
+                            <div className="space-y-3">
+                                <div>
+                                    <label className="text-xs font-bold text-zinc-400 block mb-1">Monto ($)</label>
+                                    <input type="number" min={0} value={movManualForm.monto} onChange={e => setMovManualForm(p => ({ ...p, monto: e.target.value }))}
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-white focus:border-fire outline-none text-center font-bold text-lg" />
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-zinc-400 block mb-1">Método de pago</label>
+                                    <select value={movManualForm.metodo_pago} onChange={e => setMovManualForm(p => ({ ...p, metodo_pago: e.target.value }))}
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-white outline-none">
+                                        <option value="EFECTIVO">💵 Efectivo</option>
+                                        <option value="NEQUI">📱 Nequi</option>
+                                        <option value="BANCOLOMBIA">🏦 Bancolombia</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-zinc-400 block mb-1">Motivo / Descripción</label>
+                                    <textarea value={movManualForm.descripcion} onChange={e => setMovManualForm(p => ({ ...p, descripcion: e.target.value }))}
+                                        placeholder={showMovManualModal === 'INGRESO_MANUAL' ? 'Ej: Aporte del propietario, devolución de préstamo' : 'Ej: Retiro personal, entrega a proveedor'}
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-white outline-none text-xs resize-none h-16" />
+                                </div>
+                            </div>
+                            <button
+                                onClick={handleMovManual}
+                                disabled={actionLoading || !movManualForm.monto || Number(movManualForm.monto) <= 0}
+                                className={`w-full py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all shadow-lg disabled:opacity-50 text-white ${showMovManualModal === 'INGRESO_MANUAL' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}
+                            >
+                                {actionLoading ? 'Procesando...' : showMovManualModal === 'INGRESO_MANUAL' ? '✅ Registrar Ingreso' : '✅ Registrar Retiro'}
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Modal Resolver Diferencia de Caja */}
+                {showResolverDifModal && (
+                    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[999]">
+                        <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-2xl relative space-y-4 font-sans">
+                            <div className="flex justify-between items-center border-b border-zinc-800 pb-3">
+                                <h3 className="text-lg font-bold font-serif text-amber-400">⚖️ Resolver Diferencia de Caja</h3>
+                                <button onClick={() => setShowResolverDifModal(null)} className="text-zinc-500 hover:text-white">✕</button>
+                            </div>
+                            <div className="p-3 bg-zinc-950 rounded-lg border border-zinc-800 text-xs">
+                                <p className="text-zinc-400">Sesión: <span className="text-white font-mono">{showResolverDifModal.perfiles_trabajadores?.nombre || 'Desconocido'}</span></p>
+                                <p className="text-zinc-400 mt-1">Diferencia total: <span className={`font-bold ${Number(showResolverDifModal.diferencia) < 0 ? 'text-red-400' : 'text-green-400'}`}>${Number(showResolverDifModal.diferencia || 0).toLocaleString()}</span></p>
+                                {Number(showResolverDifModal.diferencia_efectivo || 0) !== 0 && <p className="text-zinc-500 mt-0.5">Efectivo: ${Number(showResolverDifModal.diferencia_efectivo).toLocaleString()}</p>}
+                                {Number(showResolverDifModal.diferencia_nequi || 0) !== 0 && <p className="text-zinc-500 mt-0.5">Nequi: ${Number(showResolverDifModal.diferencia_nequi).toLocaleString()}</p>}
+                                {Number(showResolverDifModal.diferencia_bancolombia || 0) !== 0 && <p className="text-zinc-500 mt-0.5">Bancolombia: ${Number(showResolverDifModal.diferencia_bancolombia).toLocaleString()}</p>}
+                            </div>
+                            <div className="space-y-3">
+                                <div>
+                                    <label className="text-xs font-bold text-zinc-400 block mb-1">Tipo de diferencia</label>
+                                    <select value={resolverDifForm.tipo} onChange={e => setResolverDifForm(p => ({ ...p, tipo: e.target.value }))}
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-white outline-none">
+                                        <option value="FALTANTE">Faltante (pérdida)</option>
+                                        <option value="SOBRANTE">Sobrante (excedente)</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-zinc-400 block mb-1">Método de pago</label>
+                                    <select value={resolverDifForm.metodo_pago} onChange={e => setResolverDifForm(p => ({ ...p, metodo_pago: e.target.value }))}
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-white outline-none">
+                                        <option value="EFECTIVO">💵 Efectivo</option>
+                                        <option value="NEQUI">📱 Nequi</option>
+                                        <option value="BANCOLOMBIA">🏦 Bancolombia</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-zinc-400 block mb-1">Monto ($)</label>
+                                    <input type="number" min={0} value={resolverDifForm.monto} onChange={e => setResolverDifForm(p => ({ ...p, monto: e.target.value }))}
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-white focus:border-amber-500 outline-none text-center font-bold" />
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-zinc-400 block mb-1">Motivo / Autorización</label>
+                                    <textarea value={resolverDifForm.motivo} onChange={e => setResolverDifForm(p => ({ ...p, motivo: e.target.value }))}
+                                        placeholder="Ej: Error de vuelto, faltante aceptado por el admin, sobrante por error de conteo"
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-white outline-none text-xs resize-none h-16" />
+                                </div>
+                            </div>
+                            <div className="p-2.5 bg-amber-500/5 border border-amber-500/10 rounded-lg text-amber-400 text-[10px]">
+                                ⚠️ Esta acción creará un movimiento de ajuste inmutable en el historial financiero. El historial original NO será modificado.
+                            </div>
+                            <button
+                                onClick={handleResolverDiferencia}
+                                disabled={actionLoading || !resolverDifForm.monto || Number(resolverDifForm.monto) <= 0 || !resolverDifForm.motivo}
+                                className="w-full bg-amber-600 hover:bg-amber-700 text-white py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all shadow-lg disabled:opacity-50"
+                            >
+                                {actionLoading ? 'Procesando...' : '✅ Autorizar y Registrar Ajuste'}
                             </button>
                         </div>
                     </div>

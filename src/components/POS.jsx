@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { useNavigate } from 'react-router-dom';
-import { ShoppingCart, User, Search, Plus, Minus, Trash2, LogOut, CheckCircle, RefreshCw, Key, ShieldAlert, Award, QrCode, UserPlus, Camera, X, Check, AlertCircle } from 'lucide-react';
+import { ShoppingCart, User, Search, Plus, Minus, Trash2, LogOut, CheckCircle, RefreshCw, Key, ShieldAlert, Award, QrCode, UserPlus, Camera, X, Check, AlertCircle, ChevronDown } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
 import NumericInput from './ui/NumericInput';
 
@@ -49,6 +49,8 @@ const POS = () => {
     const [activeSession, setActiveSession] = useState(null);
     const [sessionLoading, setSessionLoading] = useState(true);
     const [openCashAmount, setOpenCashAmount] = useState(50000);
+    const [openNequiAmount, setOpenNequiAmount] = useState(0);
+    const [openBancoAmount, setOpenBancoAmount] = useState(0);
     const [closeCashCounted, setCloseCashCounted] = useState(0);
     const [closeNequiCounted, setCloseNequiCounted] = useState(0);
     const [closeBancoCounted, setCloseBancoCounted] = useState(0);
@@ -102,7 +104,7 @@ const POS = () => {
             if (!error && data) {
                 setActiveSession(data);
                 // Calculate expected cash dynamically
-                await fetchExpectedCash(data.id, data.monto_apertura);
+                await fetchExpectedCash(data.id);
             } else {
                 setActiveSession(null);
             }
@@ -113,23 +115,35 @@ const POS = () => {
         }
     };
 
-    const fetchExpectedCash = async (sessionId, _openingAmount) => {
+    const fetchExpectedCash = async (sessionId) => {
         try {
-            // Fetch ALL movements for this session
+            // Fetch session opening amounts (declaracion de custodia)
+            const { data: session } = await supabase
+                .from('sesiones_caja')
+                .select('monto_apertura, apertura_nequi, apertura_bancolombia')
+                .eq('id', sessionId)
+                .single();
+
+            const openEf = Number(session?.monto_apertura || 0);
+            const openNq = Number(session?.apertura_nequi || 0);
+            const openBc = Number(session?.apertura_bancolombia || 0);
+
+            // Fetch financial movements for this session (no apertura movements exist anymore)
             const { data: allMovs } = await supabase
                 .from('movimientos_caja')
                 .select('monto, tipo, metodo_pago')
                 .eq('sesion_id', sessionId);
 
-            const calcExpected = (method) => {
+            const calcMovs = (method) => {
                 const ing = (allMovs || []).filter(m => m.tipo === 'INGRESO' && m.metodo_pago === method).reduce((s, m) => s + Number(m.monto), 0);
                 const egr = (allMovs || []).filter(m => m.tipo === 'EGRESO' && m.metodo_pago === method).reduce((s, m) => s + Number(m.monto), 0);
                 return ing - egr;
             };
 
-            setExpectedCashAtClose(calcExpected('EFECTIVO'));
-            setExpectedNequiAtClose(calcExpected('NEQUI'));
-            setExpectedBancoAtClose(calcExpected('BANCOLOMBIA'));
+            // Esperado = apertura declarada + movimientos financieros de sesion
+            setExpectedCashAtClose(openEf + calcMovs('EFECTIVO'));
+            setExpectedNequiAtClose(openNq + calcMovs('NEQUI'));
+            setExpectedBancoAtClose(openBc + calcMovs('BANCOLOMBIA'));
         } catch (err) {
             console.error(err);
         }
@@ -503,7 +517,9 @@ const POS = () => {
         setErrorMessage('');
         try {
             const { data, error } = await supabase.rpc('abrir_caja', {
-                p_monto_apertura: Number(openCashAmount)
+                p_monto_apertura: Number(openCashAmount),
+                p_apertura_nequi: Number(openNequiAmount),
+                p_apertura_bancolombia: Number(openBancoAmount)
             });
 
             if (error) throw new Error(error.message);
@@ -616,7 +632,7 @@ const POS = () => {
 
             // Update expected cash view
             if (activeSession) {
-                await fetchExpectedCash(activeSession.id, activeSession.monto_apertura);
+                await fetchExpectedCash(activeSession.id);
             }
 
         } catch (err) {
@@ -658,6 +674,34 @@ const POS = () => {
                                 min={0}
                             />
                         </div>
+
+                        {/* Otros medios de pago — opcionales */}
+                        <details className="group">
+                            <summary className="text-[10px] font-bold uppercase tracking-wider text-zinc-600 cursor-pointer hover:text-zinc-400 transition-colors select-none list-none flex items-center gap-1">
+                                <ChevronDown size={12} className="group-open:rotate-180 transition-transform" />
+                                Incluir saldos de otros medios (opcional)
+                            </summary>
+                            <div className="space-y-3 mt-3">
+                                <div>
+                                    <label className="text-xs font-bold uppercase tracking-wider text-pink-400/70 block mb-1">📱 Nequi ($)</label>
+                                    <NumericInput
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-white focus:border-pink-500 outline-none text-center font-bold"
+                                        value={openNequiAmount}
+                                        onChange={setOpenNequiAmount}
+                                        min={0}
+                                    />
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold uppercase tracking-wider text-yellow-400/70 block mb-1">🏦 Bancolombia ($)</label>
+                                    <NumericInput
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-white focus:border-yellow-500 outline-none text-center font-bold"
+                                        value={openBancoAmount}
+                                        onChange={setOpenBancoAmount}
+                                        min={0}
+                                    />
+                                </div>
+                            </div>
+                        </details>
 
                         {errorMessage && (
                             <div className="p-2.5 bg-red-500/10 border border-red-500/20 text-red-500 text-xs rounded text-center">
