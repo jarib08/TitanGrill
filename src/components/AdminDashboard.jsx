@@ -270,7 +270,7 @@ const AdminDashboard = () => {
     const [expandedCajaAccount, setExpandedCajaAccount] = useState(null); // null | 'EFECTIVO' | 'NEQUI' | 'BANCOLOMBIA'
 
     // Fase 2: Alert badge counts (computed from loaded data)
-    const pendingAnulacionesCount = anulacionesList.filter(a => a.estado === 'PENDIENTE' || a.estado === 'APROBACION_1').length;
+    const pendingAnulacionesCount = anulacionesList.filter(a => a.estado === 'PENDIENTE').length;
     const arqueosConDiferencia = sessionsList.filter(s => s.estado === 'CERRADA' && Math.abs(Number(s.diferencia || 0)) > 0).length;
     const alertBadges = {
         ventas: pendingAnulacionesCount,
@@ -3278,18 +3278,18 @@ const AdminDashboard = () => {
                                                                                 Requiere otro aprobador
                                                                             </span>
                                                                         ) : (
-                                                                            <button onClick={() => handleAprobarAnulacion(sol.id)} disabled={actionLoading} className="text-[10px] font-bold bg-green-500/10 text-green-400 hover:bg-green-500/20 px-3 py-1 rounded transition-colors">Aprobar (1ª)</button>
+                                                                            <button onClick={() => handleAprobarAnulacion(sol.id)} disabled={actionLoading} className="text-[10px] font-bold bg-green-500/10 text-green-400 hover:bg-green-500/20 px-3 py-1 rounded transition-colors">Aprobar y Ejecutar</button>
                                                                         )}
                                                                     </>
                                                                 )}
                                                                 {sol.estado === 'APROBACION_1' && (
                                                                     <>
-                                                                        {(sol.solicitante_id === currentUserProfile?.id || sol.aprobador_1_id === currentUserProfile?.id) ? (
-                                                                            <span className="text-[10px] font-bold text-blue-400/70 border border-blue-500/20 px-3 py-1 rounded">
-                                                                                Esperando 2º aprobador
+                                                                        {sol.solicitante_id === currentUserProfile?.id ? (
+                                                                            <span className="text-[10px] font-bold text-yellow-500/70 border border-yellow-500/20 px-3 py-1 rounded">
+                                                                                Requiere otro aprobador
                                                                             </span>
                                                                         ) : (
-                                                                            <button onClick={() => handleAprobarAnulacion(sol.id)} disabled={actionLoading} className="text-[10px] font-bold bg-green-500/10 text-green-400 hover:bg-green-500/20 px-3 py-1 rounded transition-colors">Aprobar y Ejecutar (2ª)</button>
+                                                                            <button onClick={() => handleAprobarAnulacion(sol.id)} disabled={actionLoading} className="text-[10px] font-bold bg-green-500/10 text-green-400 hover:bg-green-500/20 px-3 py-1 rounded transition-colors">Aprobar y Ejecutar</button>
                                                                         )}
                                                                     </>
                                                                 )}
@@ -5383,6 +5383,19 @@ const AdminDashboard = () => {
                                                 onChange={val => setInsumoForm(p => ({ ...p, stock_minimo: val }))}
                                             />
                                         </div>
+                                        {editingInsumo !== 'new' && (
+                                            <div className="sm:col-span-2 bg-zinc-950/50 border border-zinc-800 rounded-lg p-3">
+                                                <label className="text-[10px] uppercase tracking-wider font-bold text-zinc-400 block mb-1">Costo Total en Inventario</label>
+                                                <div className="flex items-baseline gap-2">
+                                                    <p className="text-lg font-mono font-bold text-amber-400">
+                                                        ${Math.round(Number(insumoForm.stock_actual || 0) * Number(insumoForm.costo_unitario || 0)).toLocaleString()}
+                                                    </p>
+                                                    <p className="text-[10px] text-zinc-500">
+                                                        ({Number(insumoForm.stock_actual || 0).toLocaleString()} × ${Number(insumoForm.costo_unitario || 0).toLocaleString()})
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        )}
                                         <div className="flex items-center gap-3 sm:col-span-2">
                                             <input
                                                 id="ins-activo"
