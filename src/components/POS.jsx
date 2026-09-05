@@ -6,6 +6,8 @@ import { Html5Qrcode } from 'html5-qrcode';
 import NumericInput from './ui/NumericInput';
 
 // Products loaded dynamically from Supabase
+const PENDING_SALE_KEY = 'titan_grill_pending_sale';
+const SALE_TIMEOUT_MS = 20000; // 20 seconds
 
 const POS = () => {
     const navigate = useNavigate();
@@ -74,6 +76,7 @@ const POS = () => {
     const [loading, setLoading] = useState(false);
     const [successMessage, setSuccessMessage] = useState('');
     const [errorMessage, setErrorMessage] = useState('');
+    const [saleStatus, setSaleStatus] = useState('READY'); // READY | REGISTERING | INDETERMINATE | RECOVERING | SUCCESS | ERROR
 
     const fetchProducts = async () => {
         setProductsLoading(true);
@@ -167,6 +170,30 @@ const POS = () => {
         getWorkerProfile();
         fetchProducts();
         // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // Pending sale recovery on mount/reload
+    useEffect(() => {
+        const pendingRaw = localStorage.getItem(PENDING_SALE_KEY);
+        if (!pendingRaw) return;
+
+        let pending;
+        try {
+            pending = JSON.parse(pendingRaw);
+        } catch {
+            localStorage.removeItem(PENDING_SALE_KEY);
+            return;
+        }
+
+        // Discard if older than 10 minutes
+        if (Date.now() - pending.timestamp > 600000) {
+            localStorage.removeItem(PENDING_SALE_KEY);
+            return;
+        }
+
+        // There's a pending sale — show INDETERMINATE state
+        setSaleStatus('INDETERMINATE');
+        setErrorMessage('⚠️ Se detectó una venta pendiente de confirmar. Presiona "Reintentar verificación" para verificar su estado.');
     }, []);
 
     // Observer to hide mobile floating cart when #detalle-pedido is in viewport
@@ -570,9 +597,154 @@ const POS = () => {
         }
     };
 
+    // Helper: execute RPC with timeout
+    const rpcWithTimeout = (params, timeoutMs) => {
+        return Promise.race([
+            supabase.rpc('registrar_venta', params),
+            new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('TIMEOUT')), timeoutMs)
+            )
+        ]);
+    };
+
+    // Helper: clear cart and UI after confirmed sale
+    const clearSaleUI = () => {
+        setCart([]);
+        setDiscount(0);
+        setDiscountInput(0);
+        setDiscountType('pesos');
+        setSelectedClient(null);
+        setExtraClients([]);
+        setSearchQuery('');
+        setClients([]);
+        setPaymentMethod('EFECTIVO');
+        setCashAmount(0);
+        setNequiAmount(0);
+        setBancolombiaAmount(0);
+    };
+
+    // Core sale execution — used by both initial attempt and recovery
+    const executeSale = async (rpcParams) => {
+        try {
+            const { data, error } = await rpcWithTimeout(rpcParams, SALE_TIMEOUT_MS);
+
+            if (error) throw new Error(error.message);
+            if (data && !data.success) throw new Error(data.message);
+
+            // SUCCESS — sale confirmed (either new or recovered)
+            localStorage.removeItem(PENDING_SALE_KEY);
+            const recoveryNote = data.recovered ? ' (confirmada tras verificación)' : '';
+            setSuccessMessage(
+                `Venta registrada con éxito${recoveryNote}. ${data.earned_stamps > 0 ? `🔥 ¡${data.earned_stamps} sello${data.earned_stamps > 1 ? 's' : ''} de fidelización asignado${data.earned_stamps > 1 ? 's' : ''}!` : ''}`
+            );
+            setSaleStatus('SUCCESS');
+            clearSaleUI();
+
+            // Fire-and-forget: update expected cash (decoupled from sale result)
+            if (activeSession) {
+                fetchExpectedCash(activeSession.id).catch(e =>
+                    console.warn('Error actualizando saldo esperado:', e)
+                );
+            }
+            return true;
+        } catch (err) {
+            if (err.message === 'TIMEOUT') {
+                // INDETERMINATE — we don't know if the sale was committed
+                setSaleStatus('INDETERMINATE');
+                setErrorMessage('⚠️ La operación tardó más de lo esperado. Verificando...');
+                setSuccessMessage('');
+
+                // Automatic retry with SAME key (idempotent)
+                try {
+                    setSaleStatus('RECOVERING');
+                    const { data: retryData, error: retryError } = await rpcWithTimeout(rpcParams, SALE_TIMEOUT_MS);
+
+                    if (retryError) throw new Error(retryError.message);
+                    if (retryData && !retryData.success) throw new Error(retryData.message);
+
+                    // RECOVERED
+                    localStorage.removeItem(PENDING_SALE_KEY);
+                    const recNote = retryData.recovered ? ' (confirmada tras verificación)' : '';
+                    setSuccessMessage(`✅ Venta registrada con éxito${recNote}.`);
+                    setErrorMessage('');
+                    setSaleStatus('SUCCESS');
+                    clearSaleUI();
+
+                    if (activeSession) {
+                        fetchExpectedCash(activeSession.id).catch(e =>
+                            console.warn('Error actualizando saldo esperado:', e)
+                        );
+                    }
+                    return true;
+                } catch (retryErr) {
+                    if (retryErr.message === 'TIMEOUT') {
+                        setSaleStatus('INDETERMINATE');
+                        setErrorMessage('⚠️ No se pudo confirmar la venta. Presiona "Reintentar verificación" o contacta al administrador. NO registres la venta nuevamente.');
+                    } else {
+                        setSaleStatus('ERROR');
+                        setErrorMessage(retryErr.message || 'Error al verificar la venta.');
+                        localStorage.removeItem(PENDING_SALE_KEY);
+                    }
+                    return false;
+                }
+            } else {
+                // CONFIRMED ERROR — sale did NOT happen (business logic error or RPC rejection)
+                setSaleStatus('ERROR');
+                setErrorMessage(err.message || 'Error al registrar la venta.');
+                localStorage.removeItem(PENDING_SALE_KEY);
+                return false;
+            }
+        }
+    };
+
+    // Retry handler for INDETERMINATE state
+    const handleRetryVerification = async () => {
+        const pendingRaw = localStorage.getItem(PENDING_SALE_KEY);
+        if (!pendingRaw) {
+            setErrorMessage('No hay operación pendiente para verificar.');
+            setSaleStatus('READY');
+            return;
+        }
+
+        let pending;
+        try {
+            pending = JSON.parse(pendingRaw);
+        } catch {
+            localStorage.removeItem(PENDING_SALE_KEY);
+            setErrorMessage('Datos de operación pendiente corruptos. Operación cancelada.');
+            setSaleStatus('READY');
+            return;
+        }
+
+        // Check age — discard if older than 10 minutes
+        if (Date.now() - pending.timestamp > 600000) {
+            localStorage.removeItem(PENDING_SALE_KEY);
+            setErrorMessage('La operación pendiente expiró (más de 10 minutos). Verifica manualmente en ventas recientes.');
+            setSaleStatus('READY');
+            return;
+        }
+
+        setLoading(true);
+        isSubmittingRef.current = true;
+        setSaleStatus('RECOVERING');
+        setErrorMessage('🔄 Verificando estado de la venta...');
+        setSuccessMessage('');
+
+        await executeSale(pending.rpcParams);
+
+        setLoading(false);
+        isSubmittingRef.current = false;
+    };
+
     const handleRegisterSale = async () => {
         // B18: Prevent double-click
         if (isSubmittingRef.current) return;
+
+        // Block if there's an unresolved INDETERMINATE operation
+        if (saleStatus === 'INDETERMINATE' || saleStatus === 'RECOVERING') {
+            setErrorMessage('⚠️ Existe una operación pendiente. Usa "Reintentar verificación" antes de registrar una nueva venta.');
+            return;
+        }
 
         if (!activeSession) {
             setErrorMessage('Se requiere abrir caja antes de registrar ventas.');
@@ -592,56 +764,40 @@ const POS = () => {
             }
         }
 
+        // Generate idempotency key ONCE for this operation
+        const operationKey = crypto.randomUUID();
+
+        const rpcParams = {
+            p_cliente_id: selectedClient ? selectedClient.id : null,
+            p_total: finalTotal,
+            p_metodo_pago: paymentMethod,
+            p_detalles: { items: cart, subtotal, discount },
+            p_monto_efectivo: paymentMethod === 'MIXTO' ? Number(cashAmount) : 0,
+            p_monto_nequi: paymentMethod === 'MIXTO' ? Number(nequiAmount) : 0,
+            p_monto_bancolombia: paymentMethod === 'MIXTO' ? Number(bancolombiaAmount) : 0,
+            p_clientes_extra: extraClients.map(c => c.id),
+            p_idempotency_key: operationKey
+        };
+
+        // Persist pending sale BEFORE sending RPC
+        localStorage.setItem(PENDING_SALE_KEY, JSON.stringify({
+            key: operationKey,
+            rpcParams,
+            timestamp: Date.now()
+        }));
+
         setLoading(true);
         isSubmittingRef.current = true;
         setErrorMessage('');
         setSuccessMessage('');
+        setSaleStatus('REGISTERING');
 
-        try {
-            const { data, error } = await supabase.rpc('registrar_venta', {
-                p_cliente_id: selectedClient ? selectedClient.id : null,
-                p_total: finalTotal,
-                p_metodo_pago: paymentMethod,
-                p_detalles: { items: cart, subtotal, discount },
-                p_monto_efectivo: paymentMethod === 'MIXTO' ? Number(cashAmount) : 0,
-                p_monto_nequi: paymentMethod === 'MIXTO' ? Number(nequiAmount) : 0,
-                p_monto_bancolombia: paymentMethod === 'MIXTO' ? Number(bancolombiaAmount) : 0,
-                p_clientes_extra: extraClients.map(c => c.id)
-            });
+        await executeSale(rpcParams);
 
-            if (error) throw new Error(error.message);
-            if (data && !data.success) throw new Error(data.message);
-
-            setSuccessMessage(
-                `Venta registrada con éxito. ${data.earned_stamps > 0 ? `🔥 ¡${data.earned_stamps} sello${data.earned_stamps > 1 ? 's' : ''} de fidelización asignado${data.earned_stamps > 1 ? 's' : ''}!` : ''}`
-            );
-
-            // Reset UI
-            setCart([]);
-            setDiscount(0);
-            setDiscountInput(0);
-            setDiscountType('pesos');
-            setSelectedClient(null);
-            setExtraClients([]);
-            setSearchQuery('');
-            setClients([]);
-            setPaymentMethod('EFECTIVO');
-            setCashAmount(0);
-            setNequiAmount(0);
-            setBancolombiaAmount(0);
-
-            // Update expected cash view
-            if (activeSession) {
-                await fetchExpectedCash(activeSession.id);
-            }
-
-        } catch (err) {
-            setErrorMessage(err.message || 'Error al registrar la venta.');
-        } finally {
-            setLoading(false);
-            isSubmittingRef.current = false;
-        }
+        setLoading(false);
+        isSubmittingRef.current = false;
     };
+
 
     if (sessionLoading) {
         return (
@@ -1269,7 +1425,11 @@ const POS = () => {
                         </div>
 
                         {errorMessage && (
-                            <div className="p-2.5 bg-red-500/10 border border-red-500/20 text-red-500 text-xs rounded text-center">
+                            <div className={`p-2.5 border text-xs rounded text-center ${
+                                saleStatus === 'INDETERMINATE' || saleStatus === 'RECOVERING'
+                                    ? 'bg-amber-500/10 border-amber-500/20 text-amber-400'
+                                    : 'bg-red-500/10 border-red-500/20 text-red-500'
+                            }`}>
                                 {errorMessage}
                             </div>
                         )}
@@ -1281,12 +1441,24 @@ const POS = () => {
                             </div>
                         )}
 
+                        {saleStatus === 'INDETERMINATE' && (
+                            <button
+                                onClick={handleRetryVerification}
+                                className="w-full bg-amber-600 text-white hover:bg-amber-700 py-3 rounded-lg text-sm font-bold transition-all uppercase tracking-wider"
+                            >
+                                🔄 Reintentar Verificación
+                            </button>
+                        )}
+
                         <button
                             onClick={handleRegisterSale}
-                            disabled={loading || (paymentMethod === 'MIXTO' && (Number(cashAmount) + Number(nequiAmount) + Number(bancolombiaAmount)) !== finalTotal)}
+                            disabled={loading || saleStatus === 'INDETERMINATE' || saleStatus === 'RECOVERING' || (paymentMethod === 'MIXTO' && (Number(cashAmount) + Number(nequiAmount) + Number(bancolombiaAmount)) !== finalTotal)}
                             className="w-full bg-fire text-white hover:bg-orange-700 py-3.5 rounded-lg text-sm font-bold transition-all shadow-lg shadow-fire/10 active:scale-[0.99] uppercase tracking-wider disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                            {loading ? 'Registrando Venta...' : 'Registrar Venta'}
+                            {saleStatus === 'REGISTERING' ? 'Registrando Venta...' :
+                             saleStatus === 'RECOVERING' ? '🔄 Verificando...' :
+                             saleStatus === 'INDETERMINATE' ? '⚠️ Venta Pendiente' :
+                             'Registrar Venta'}
                         </button>
                     </div>
                 </aside>
