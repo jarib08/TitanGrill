@@ -1065,7 +1065,8 @@ const AdminDashboard = () => {
             setTicketByDayData(Object.keys(ticketByDayMap).map(day => ({ name: day, value: Math.round(ticketByDayMap[day] / countByDayMap[day]) })));
 
             // --- Inventory processing ---
-            const insumos = getResData(results[1]);
+            const allInsumos = getResData(results[1]);
+            const insumos = allInsumos.filter(i => i.activo);
             const lowStock = insumos.filter(i => Number(i.stock_actual) <= Number(i.stock_minimo) && Number(i.stock_actual) > 0);
             const outOfStock = insumos.filter(i => Number(i.stock_actual) === 0);
             setLowStockList(lowStock);
@@ -5489,22 +5490,27 @@ const AdminDashboard = () => {
                                 ) : (() => {
                                     const agotados = insumosList.filter(i => Number(i.stock_actual) === 0 && i.activo);
                                     const bajos = insumosList.filter(i => Number(i.stock_actual) > 0 && Number(i.stock_actual) <= Number(i.stock_minimo) && i.activo);
-                                    const ok = insumosList.filter(i => Number(i.stock_actual) > Number(i.stock_minimo) || !i.activo);
+                                    const ok = insumosList.filter(i => Number(i.stock_actual) > Number(i.stock_minimo) && i.activo);
+                                    const inactivos = insumosList.filter(i => !i.activo);
 
-                                    let lista = insumoFilter === 'agotados' ? agotados
+                                    let listaActivos = insumoFilter === 'agotados' ? agotados
                                         : insumoFilter === 'bajos' ? bajos
                                             : [...agotados, ...bajos, ...ok];
+                                            
+                                    let listaInactivos = inactivos;
 
-                                    if (insumoSearch.trim()) {
+                                    const isSearching = insumoSearch.trim().length > 0;
+                                    if (isSearching) {
                                         const q = insumoSearch.toLowerCase();
-                                        lista = lista.filter(i => i.nombre.toLowerCase().includes(q));
+                                        listaActivos = listaActivos.filter(i => i.nombre.toLowerCase().includes(q));
+                                        listaInactivos = listaInactivos.filter(i => i.nombre.toLowerCase().includes(q));
                                     }
 
-                                    if (lista.length === 0) {
+                                    if (listaActivos.length === 0 && listaInactivos.length === 0) {
                                         return <div className="p-10 text-center text-zinc-500 text-sm">Sin resultados</div>;
                                     }
 
-                                    return lista.map(ins => {
+                                    const renderCard = (ins) => {
                                         const stockNum = Number(ins.stock_actual);
                                         const minNum = Number(ins.stock_minimo);
                                         const isAgotado = stockNum === 0 && ins.activo;
@@ -5592,7 +5598,41 @@ const AdminDashboard = () => {
                                                 </div>
                                             </div>
                                         );
-                                    });
+                                    };
+
+                                    return (
+                                        <>
+                                            {listaActivos.length > 0 && (
+                                                <div className="space-y-2">
+                                                    {listaActivos.map(renderCard)}
+                                                </div>
+                                            )}
+                                            
+                                            {listaInactivos.length > 0 && (
+                                                isSearching ? (
+                                                    <div className="space-y-2 mt-4">
+                                                        <h3 className="text-zinc-500 font-bold text-xs uppercase tracking-wider mb-2 ml-1">Insumos Apagados / Inactivos</h3>
+                                                        {listaInactivos.map(renderCard)}
+                                                    </div>
+                                                ) : (
+                                                    <details className="mt-4 bg-zinc-900/30 border border-zinc-800/60 rounded-2xl overflow-hidden [&_summary::-webkit-details-marker]:hidden group">
+                                                        <summary className="p-4 cursor-pointer flex items-center justify-between hover:bg-zinc-800/50 transition-colors list-none select-none">
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="w-2 h-2 rounded-full shrink-0 bg-zinc-600" />
+                                                                <span className="font-bold text-xs uppercase tracking-wider text-zinc-400">
+                                                                    Insumos Apagados / Inactivos ({listaInactivos.length})
+                                                                </span>
+                                                            </div>
+                                                            <ChevronDown size={16} className="text-zinc-500 transition-transform duration-200 group-open:rotate-180" />
+                                                        </summary>
+                                                        <div className="p-4 pt-0 space-y-2 border-t border-zinc-800/60 bg-zinc-950/20">
+                                                            {listaInactivos.map(renderCard)}
+                                                        </div>
+                                                    </details>
+                                                )
+                                            )}
+                                        </>
+                                    );
                                 })()}
                             </div>
                         </>)}
