@@ -1100,8 +1100,8 @@ const AdminDashboard = () => {
 
             // --- Cash processing ---
             const movimientos = getResData(results[5]);
-            const totalIngresos = movimientos.filter(m => m.tipo === 'INGRESO').reduce((sum, m) => sum + Number(m.monto || 0), 0);
-            const totalEgresos = movimientos.filter(m => m.tipo === 'EGRESO').reduce((sum, m) => sum + Number(m.monto || 0), 0);
+            const totalIngresos = movimientos.filter(m => m.tipo === 'INGRESO' && m.tipo_operacion !== 'TRANSFERENCIA_INTERNA').reduce((sum, m) => sum + Number(m.monto || 0), 0);
+            const totalEgresos = movimientos.filter(m => m.tipo === 'EGRESO' && m.tipo_operacion !== 'TRANSFERENCIA_INTERNA').reduce((sum, m) => sum + Number(m.monto || 0), 0);
             const efectivoIngresos = movimientos.filter(m => m.tipo === 'INGRESO' && m.metodo_pago === 'EFECTIVO').reduce((sum, m) => sum + Number(m.monto || 0), 0);
             const efectivoEgresos = movimientos.filter(m => m.tipo === 'EGRESO' && m.metodo_pago === 'EFECTIVO').reduce((sum, m) => sum + Number(m.monto || 0), 0);
             const nequiIngresos = movimientos.filter(m => m.tipo === 'INGRESO' && m.metodo_pago === 'NEQUI').reduce((sum, m) => sum + Number(m.monto || 0), 0);
@@ -4037,7 +4037,7 @@ const AdminDashboard = () => {
                                 {(() => {
                                     const nominaPagada = liquidacionesList.filter(l => l.estado === 'PAGADO').reduce((sum, l) => sum + Number(l.monto_calculado || 0), 0);
                                     const gastosRegistrados = gastosList.filter(g => g.estado !== 'ANULADO').reduce((sum, g) => sum + Number(g.monto || 0), 0);
-                                    const otrosEgresos = movementsList.filter(m => m.tipo === 'EGRESO' && !m.compra_id && !m.gasto_id && !m.liquidacion_id).reduce((sum, m) => sum + Number(m.monto || 0), 0);
+                                    const otrosEgresos = movementsList.filter(m => m.tipo === 'EGRESO' && !m.compra_id && !m.gasto_id && !m.liquidacion_id && m.tipo_operacion !== 'TRANSFERENCIA_INTERNA').reduce((sum, m) => sum + Number(m.monto || 0), 0);
                                     return (
                                         <>
                                             <h3 className="text-2xl font-bold text-red-400">
@@ -4055,7 +4055,7 @@ const AdminDashboard = () => {
                                 {(() => {
                                     const nominaPagada = liquidacionesList.filter(l => l.estado === 'PAGADO').reduce((sum, l) => sum + Number(l.monto_calculado || 0), 0);
                                     const gastosRegistrados = gastosList.filter(g => g.estado !== 'ANULADO').reduce((sum, g) => sum + Number(g.monto || 0), 0);
-                                    const otrosEgresos = movementsList.filter(m => m.tipo === 'EGRESO' && !m.compra_id && !m.gasto_id && !m.liquidacion_id).reduce((sum, m) => sum + Number(m.monto || 0), 0);
+                                    const otrosEgresos = movementsList.filter(m => m.tipo === 'EGRESO' && !m.compra_id && !m.gasto_id && !m.liquidacion_id && m.tipo_operacion !== 'TRANSFERENCIA_INTERNA').reduce((sum, m) => sum + Number(m.monto || 0), 0);
                                     const gastosOp = nominaPagada + gastosRegistrados + otrosEgresos;
                                     const utilidad = (salesKPIs?.totalVentas || 0) - (cogsTotal || 0) - gastosOp;
                                     return (
@@ -4102,12 +4102,12 @@ const AdminDashboard = () => {
                                 </div>
                                 <div className="flex justify-between items-center py-2.5 border-b border-zinc-800 text-sm">
                                     <span className="font-semibold text-zinc-300">(-) Otros Egresos de Caja</span>
-                                    <span className="font-bold text-red-400">-${movementsList.filter(m => m.tipo === 'EGRESO' && !m.compra_id && !m.gasto_id && !m.liquidacion_id).reduce((sum, m) => sum + Number(m.monto || 0), 0).toLocaleString()}</span>
+                                    <span className="font-bold text-red-400">-${movementsList.filter(m => m.tipo === 'EGRESO' && !m.compra_id && !m.gasto_id && !m.liquidacion_id && m.tipo_operacion !== 'TRANSFERENCIA_INTERNA').reduce((sum, m) => sum + Number(m.monto || 0), 0).toLocaleString()}</span>
                                 </div>
                                 {(() => {
                                     const nominaPagada = liquidacionesList.filter(l => l.estado === 'PAGADO').reduce((sum, l) => sum + Number(l.monto_calculado || 0), 0);
                                     const gastosRegistrados = gastosList.filter(g => g.estado !== 'ANULADO').reduce((sum, g) => sum + Number(g.monto || 0), 0);
-                                    const otrosEgresos = movementsList.filter(m => m.tipo === 'EGRESO' && !m.compra_id && !m.gasto_id && !m.liquidacion_id).reduce((sum, m) => sum + Number(m.monto || 0), 0);
+                                    const otrosEgresos = movementsList.filter(m => m.tipo === 'EGRESO' && !m.compra_id && !m.gasto_id && !m.liquidacion_id && m.tipo_operacion !== 'TRANSFERENCIA_INTERNA').reduce((sum, m) => sum + Number(m.monto || 0), 0);
                                     const totalGastos = nominaPagada + gastosRegistrados + otrosEgresos;
                                     const resultado = (salesKPIs?.totalVentas || 0) - (cogsTotal || 0) - totalGastos;
                                     return (
