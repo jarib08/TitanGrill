@@ -1,19 +1,20 @@
 import { createClient } from '@supabase/supabase-js';
 import { ERROR_MESSAGES } from '../constants';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://mbyjehhplruoqlgphfvw.supabase.co';
-const envAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-const LEGACY_JWT_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1ieWplaGhwbHJ1b3FsZ3BoZnZ3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjgyNTc0MjgsImV4cCI6MjA4MzgzMzQyOH0.XZBO_hn7kRsrNw5Pg9uC4C9eUq5VoSKuh6Txw4qwhyw';
+// B5: antes habia una URL y una anon key hardcodeadas como fallback, asi que la
+// validacion de abajo NUNCA podia fallar: un despliegue mal configurado se
+// conectaba a produccion en silencio. Ahora la configuracion es obligatoria y
+// el fallo es ruidoso.
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-const supabaseAnonKey = (envAnonKey && envAnonKey.startsWith('eyJ')) ? envAnonKey : LEGACY_JWT_ANON_KEY;
-
-// Validate required environment variables
 if (!supabaseUrl || !supabaseAnonKey) {
-    const errorMessage = ERROR_MESSAGES.SUPABASE_MISSING;
+    const errorMessage =
+        `${ERROR_MESSAGES.SUPABASE_MISSING}. ` +
+        `Faltan: ${[!supabaseUrl && 'VITE_SUPABASE_URL', !supabaseAnonKey && 'VITE_SUPABASE_ANON_KEY'].filter(Boolean).join(', ')}. ` +
+        `Defina estas variables en .env antes de compilar.`;
     console.error(errorMessage);
-    if (import.meta.env.PROD) {
-        throw new Error(errorMessage);
-    }
+    throw new Error(errorMessage);
 }
 
 // Create Supabase client with options

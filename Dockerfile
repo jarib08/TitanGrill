@@ -2,12 +2,27 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
-RUN npm install
+RUN npm ci
 COPY . .
 
-# Create .env file with Supabase credentials
-RUN echo "VITE_SUPABASE_URL=https://mbyjehhplruoqlgphfvw.supabase.co" > .env && \
-    echo "VITE_SUPABASE_ANON_KEY=sb_publishable_ouDY6PbVEx52C7TcxuQ8Ig_Xq7q6can" >> .env
+# B5: antes el Dockerfile sobrescribia .env con credenciales hardcodeadas, lo
+# que volvia decorativa toda la configuracion de entorno y dejaba la anon key
+# en el historial de la imagen. Ahora se pasan como build args.
+#
+# Uso:
+#   docker build \
+#     --build-arg VITE_SUPABASE_URL="https://<ref>.supabase.co" \
+#     --build-arg VITE_SUPABASE_ANON_KEY="<anon key>" \
+#     -t titan-grill .
+ARG VITE_SUPABASE_URL
+ARG VITE_SUPABASE_ANON_KEY
+ENV VITE_SUPABASE_URL=$VITE_SUPABASE_URL
+ENV VITE_SUPABASE_ANON_KEY=$VITE_SUPABASE_ANON_KEY
+
+# Falla temprano y con mensaje claro si faltan, en vez de compilar una imagen
+# que no puede conectarse.
+RUN test -n "$VITE_SUPABASE_URL"      || (echo "ERROR: falta --build-arg VITE_SUPABASE_URL" && exit 1)
+RUN test -n "$VITE_SUPABASE_ANON_KEY" || (echo "ERROR: falta --build-arg VITE_SUPABASE_ANON_KEY" && exit 1)
 
 RUN npm run build
 

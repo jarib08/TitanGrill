@@ -26,17 +26,25 @@ export default defineConfig({
           'vendor-charts': ['recharts'],
           // Animation library
           'vendor-motion': ['framer-motion'],
-          // QR code libraries
-          'vendor-qr': ['qrcode.react', 'react-qr-code', 'html5-qrcode']
+          // C4: antes esto era un solo chunk 'vendor-qr' de ~352 KB que la
+          // landing publica descargaba completo, incluyendo html5-qrcode (el
+          // escaner de camara) que SOLO usa el POS. Separado en dos:
+          // generadores de QR (livianos, los usa la tarjeta de fidelizacion)
+          // y escaner (pesado, solo POS).
+          'vendor-qr': ['qrcode.react', 'react-qr-code'],
+          'vendor-qr-scanner': ['html5-qrcode']
         }
       }
     },
     // Minification options
     minify: 'esbuild',
-    esbuild: {
-      drop: ['console', 'debugger'],
-    }
-
+  },
+  // B4: esto estaba dentro de `build`, donde Vite lo ignora sin avisar
+  // (`esbuild` es opcion de nivel raiz en UserConfig, no de BuildEnvironmentOptions).
+  // Resultado: los console.log SI llegaban a produccion, incluyendo datos de
+  // clientes y payloads de QR escaneados.
+  esbuild: {
+    drop: ['console', 'debugger'],
   },
   // Optimize dependencies
   optimizeDeps: {

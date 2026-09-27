@@ -921,7 +921,15 @@ const AdminDashboard = () => {
         }
     };
 
-    const handleLogout = () => {
+    const handleLogout = async () => {
+        // B3: antes solo limpiaba sessionStorage, dejando el token de Supabase
+        // vivo en localStorage. La siguiente persona en el dispositivo entraba
+        // a /admin y seguia dentro. Ahora se cierra la sesion de verdad.
+        try {
+            await supabase.auth.signOut();
+        } catch (err) {
+            console.error('Error cerrando sesion:', err);
+        }
         sessionStorage.clear();
         navigate('/login');
     };
