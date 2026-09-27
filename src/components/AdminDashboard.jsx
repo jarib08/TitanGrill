@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { Users, Flame, Trophy, LogOut, ArrowRight, Award, Gift, DollarSign, Settings, ShoppingBag, Menu, X, Check, ShieldAlert, UtensilsCrossed, Plus, Pencil, PackageCheck, PackageX, Archive, ClipboardList, Trash2, Truck, FileText, Calendar, Filter, ShoppingCart, Package, AlertTriangle, Clock, TrendingUp, TrendingDown, PiggyBank, Star, BarChart3, Search, Receipt, ChevronDown } from 'lucide-react';
+import { Users, Flame, Trophy, LogOut, ArrowRight, Award, Gift, DollarSign, Settings, ShoppingBag, Menu, X, Check, ShieldAlert, UtensilsCrossed, Plus, Pencil, PackageCheck, PackageX, Archive, ClipboardList, Trash2, Truck, FileText, Calendar, Filter, ShoppingCart, Package, AlertTriangle, Clock, TrendingUp, TrendingDown, PiggyBank, Star, BarChart3, Search, Receipt, ChevronDown, RefreshCw } from 'lucide-react';
 import { useNavigate, Link } from 'react-router-dom';
 import { ComposedChart, Area, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, Legend } from 'recharts';
 import { BottomSheet } from './ui/BottomSheet.jsx';
@@ -177,7 +177,13 @@ const AdminDashboard = () => {
 
     // Liquidaciones & Rentabilidad states
     const [liquidacionesList, setLiquidacionesList] = useState([]);
-    const [cogsTotal, setCogsTotal] = useState(0);
+    // A1: el Estado de Resultados ahora lo calcula el servidor en un solo
+    // periodo coherente (RPC fn_estado_resultados). Antes se armaba en el
+    // cliente mezclando ventas del periodo con COGS, nomina y gastos de toda
+    // la historia, y costos fijos normalizados a mes.
+    const [pnl, setPnl] = useState(null);
+    const [pnlLoading, setPnlLoading] = useState(false);
+    const [pnlError, setPnlError] = useState(null);
     const [showGenerarLiqModal, setShowGenerarLiqModal] = useState(false);
     const [selectedWorkerForLiq, setSelectedWorkerForLiq] = useState(null);
     const [liqMontoForm, setLiqMontoForm] = useState(0);
@@ -307,7 +313,6 @@ const AdminDashboard = () => {
                 staffRes,
                 liqsRes,
                 expensesRes,
-                saleMovementsRes,
                 anulacionesRes,
                 costosRes
             ] = await Promise.all([
@@ -335,8 +340,6 @@ const AdminDashboard = () => {
                 supabase.from('liquidaciones').select('*, perfiles_trabajadores(nombre, email, rol, modalidad_pago, tarifa_pago)').order('fecha', { ascending: false }),
                 // 11. Gastos
                 supabase.from('gastos').select('*, categorias_gastos(nombre)').order('fecha', { ascending: false }),
-                // 10. COGS movements
-                supabase.from('movimientos_inventario').select('cantidad, insumos(costo_unitario)').eq('tipo', 'VENTA'),
                 // 12. Anulaciones
                 supabase.from('solicitudes_anulacion_venta').select('*, ventas(total, fecha, metodo_pago), solicitante:perfiles_trabajadores!solicitudes_anulacion_venta_solicitante_id_fkey(nombre), aprobador1:perfiles_trabajadores!solicitudes_anulacion_venta_aprobador_1_id_fkey(nombre), aprobador2:perfiles_trabajadores!solicitudes_anulacion_venta_aprobador_2_id_fkey(nombre)').order('created_at', { ascending: false }),
                 // 13. Costos configuracion
@@ -366,13 +369,6 @@ const AdminDashboard = () => {
             setStaffList(staffRes.data || []);
             setLiquidacionesList(liqsRes.data || []);
             setGastosList(expensesRes.data || []);
-
-            const totalCogs = (saleMovementsRes.data || []).reduce((sum, m) => {
-                const qty = Math.abs(Number(m.cantidad || 0));
-                const unitCost = Number(m.insumos?.costo_unitario || 0);
-                return sum + (qty * unitCost);
-            }, 0);
-            setCogsTotal(totalCogs);
 
             setAnulacionesList(anulacionesRes.data || []);
             setCostosList(costosRes.data || []);
@@ -579,6 +575,7 @@ const AdminDashboard = () => {
 
     useEffect(() => {
         fetchDashboardMetrics();
+        fetchEstadoResultados();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [dateRange, customStartDate, customEndDate]);
 
@@ -980,6 +977,31 @@ const AdminDashboard = () => {
         }
 
         return { start: start.toISOString(), end: end.toISOString() };
+    };
+
+    // A1: una sola fuente de verdad para el Estado de Resultados. Todos los
+    // rubros salen del MISMO rango de fechas, calculados en SQL.
+    const fetchEstadoResultados = async () => {
+        setPnlLoading(true);
+        setPnlError(null);
+        try {
+            const { start, end } = getDateRange();
+            const { data, error } = await supabase.rpc('fn_estado_resultados', {
+                p_desde: start,
+                p_hasta: end
+            });
+            if (error) throw error;
+            if (data && !data.success) throw new Error(data.message);
+            setPnl(data);
+        } catch (err) {
+            // A4: un fallo de consulta NO debe convertirse en ceros contables.
+            // Se muestra el error en vez de un informe plausible pero falso.
+            console.error('Error cargando estado de resultados:', err);
+            setPnlError(err.message || 'No se pudo calcular el estado de resultados.');
+            setPnl(null);
+        } finally {
+            setPnlLoading(false);
+        }
     };
 
     const fetchDashboardMetrics = async () => {
@@ -4028,219 +4050,267 @@ const AdminDashboard = () => {
                                 <TrendingUp className="text-fire" size={28} />
                                 Rentabilidad y Resultado Operativo
                             </h1>
-                            <p className="text-zinc-500 text-sm mt-1">Análisis financiero de Ingresos, Costo de Recetas (COGS), Gastos y Utilidad Neta</p>
+                            <p className="text-zinc-500 text-sm mt-1">
+                                Todos los rubros se calculan en el servidor sobre el <span className="text-zinc-300">mismo rango de fechas</span> seleccionado arriba
+                            </p>
                         </div>
 
-                        {/* 5 Big Financial KPI Cards */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-                            <div className="bg-zinc-900 border border-green-500/30 p-5 rounded-2xl shadow-lg">
-                                <p className="text-green-400 text-[10px] uppercase tracking-widest font-bold mb-1">Ingresos Totales (Ventas)</p>
-                                <h3 className="text-2xl font-bold text-white">${(salesKPIs?.totalVentas || 0).toLocaleString()}</h3>
-                                <span className="text-[10px] text-zinc-400 bg-zinc-950/50 inline-block px-2 py-0.5 rounded mt-2">Ventas netas cobradas</span>
+                        {pnlLoading && (
+                            <div className="bg-zinc-900 border border-zinc-800/60 rounded-2xl p-10 text-center">
+                                <RefreshCw size={22} className="animate-spin text-fire mx-auto mb-3" />
+                                <p className="text-zinc-400 text-sm">Calculando estado de resultados...</p>
                             </div>
+                        )}
 
-                            <div className="bg-zinc-900 border border-gold/40 p-5 rounded-2xl shadow-lg">
-                                <p className="text-gold text-[10px] uppercase tracking-widest font-bold mb-1">Utilidad Bruta</p>
-                                <h3 className="text-2xl font-bold text-gold">${Math.round((salesKPIs?.totalVentas || 0) - (cogsTotal || 0)).toLocaleString()}</h3>
-                                <span className="text-[10px] text-yellow-300/60 bg-gold/10 inline-block px-2 py-0.5 rounded mt-2">
-                                    Margen Bruto: {((salesKPIs?.totalVentas || 0) > 0 ? (((salesKPIs?.totalVentas || 0) - (cogsTotal || 0)) / (salesKPIs?.totalVentas || 1) * 100).toFixed(1) : '0')}%
-                                </span>
+                        {/* A4: un fallo se muestra como fallo, nunca como ceros contables */}
+                        {!pnlLoading && pnlError && (
+                            <div className="bg-red-500/5 border border-red-500/40 rounded-2xl p-6">
+                                <div className="flex items-start gap-3">
+                                    <AlertTriangle className="text-red-400 shrink-0 mt-0.5" size={20} />
+                                    <div className="flex-1">
+                                        <h3 className="font-bold text-red-300 text-sm">No se pudo calcular el estado de resultados</h3>
+                                        <p className="text-zinc-400 text-xs mt-1">{pnlError}</p>
+                                        <p className="text-zinc-500 text-[10px] mt-2">
+                                            No se muestran cifras parciales a proposito: un informe incompleto es peor que ninguno.
+                                        </p>
+                                        <button
+                                            onClick={fetchEstadoResultados}
+                                            className="mt-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-4 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider border border-zinc-700"
+                                        >
+                                            Reintentar
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
+                        )}
 
-                            {/* F6-05: Gastos Operativos excluye egresos de compras para evitar doble conteo con COGS */}
-                            <div className="bg-zinc-900 border border-red-500/30 p-5 rounded-2xl shadow-lg">
-                                <p className="text-red-400 text-[10px] uppercase tracking-widest font-bold mb-1">Total Gastos Operativos</p>
-                                {(() => {
-                                    const nominaPagada = liquidacionesList.filter(l => l.estado === 'PAGADO').reduce((sum, l) => sum + Number(l.monto_calculado || 0), 0);
-                                    const gastosRegistrados = gastosList.filter(g => g.estado !== 'ANULADO').reduce((sum, g) => sum + Number(g.monto || 0), 0);
-                                    const otrosEgresos = movementsList.filter(m => m.tipo === 'EGRESO' && !m.compra_id && !m.gasto_id && !m.liquidacion_id && m.tipo_operacion !== 'TRANSFERENCIA_INTERNA').reduce((sum, m) => sum + Number(m.monto || 0), 0);
-                                    return (
-                                        <>
-                                            <h3 className="text-2xl font-bold text-red-400">
-                                                ${(nominaPagada + gastosRegistrados + otrosEgresos).toLocaleString()}
-                                            </h3>
-                                            <span className="text-[10px] text-zinc-400 bg-zinc-950/50 inline-block px-2 py-0.5 rounded mt-2">Nómina + Gastos + Otros Egresos (excl. Compras)</span>
-                                        </>
-                                    );
-                                })()}
-                            </div>
+                        {!pnlLoading && !pnlError && pnl && (() => {
+                            const fmt = (n) => `$${Math.round(Number(n || 0)).toLocaleString()}`;
+                            const v = pnl.ventas || {};
+                            const c = pnl.cogs || {};
+                            const e = pnl.egresos || {};
+                            const f = pnl.fuera_del_resultado || {};
+                            const r = pnl.resultados || {};
+                            const per = pnl.periodo || {};
+                            const avisos = pnl.advertencias || [];
+                            const detalle = pnl.detalle_costos || [];
 
-                            <div className="bg-zinc-900 border border-blue-500/40 p-5 rounded-2xl shadow-lg">
-                                <p className="text-blue-400 text-[10px] uppercase tracking-widest font-bold mb-1">Utilidad Neta Operativa</p>
-                                {/* F6-07: gastos = nómina pagada + gastos activos + otros egresos (no compras/gastos/liquidaciones) */}
-                                {(() => {
-                                    const nominaPagada = liquidacionesList.filter(l => l.estado === 'PAGADO').reduce((sum, l) => sum + Number(l.monto_calculado || 0), 0);
-                                    const gastosRegistrados = gastosList.filter(g => g.estado !== 'ANULADO').reduce((sum, g) => sum + Number(g.monto || 0), 0);
-                                    const otrosEgresos = movementsList.filter(m => m.tipo === 'EGRESO' && !m.compra_id && !m.gasto_id && !m.liquidacion_id && m.tipo_operacion !== 'TRANSFERENCIA_INTERNA').reduce((sum, m) => sum + Number(m.monto || 0), 0);
-                                    const gastosOp = nominaPagada + gastosRegistrados + otrosEgresos;
-                                    const utilidad = (salesKPIs?.totalVentas || 0) - (cogsTotal || 0) - gastosOp;
-                                    return (
-                                        <>
-                                            <h3 className={`text-2xl font-bold ${utilidad >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                                ${Math.round(utilidad).toLocaleString()}
+                            return (
+                                <div className="space-y-6">
+                                    {/* Advertencias del motor contable */}
+                                    {avisos.length > 0 && (
+                                        <div className="bg-yellow-500/5 border border-yellow-500/40 rounded-2xl p-5">
+                                            <div className="flex items-center gap-2 mb-3">
+                                                <AlertTriangle className="text-yellow-400" size={16} />
+                                                <h3 className="font-bold text-yellow-300 text-[10px] uppercase tracking-widest">
+                                                    Advertencias sobre la confiabilidad de estas cifras
+                                                </h3>
+                                            </div>
+                                            <ul className="space-y-2">
+                                                {avisos.map((a, idx) => (
+                                                    <li key={idx} className="text-xs text-zinc-300 leading-relaxed flex gap-2">
+                                                        <span className="text-yellow-500 shrink-0">•</span>
+                                                        <span>{a}</span>
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        </div>
+                                    )}
+
+                                    {/* Periodo efectivo */}
+                                    <div className="flex items-center gap-2 text-[10px] text-zinc-500 uppercase tracking-widest font-bold">
+                                        <Calendar size={12} />
+                                        Periodo: {new Date(per.desde).toLocaleDateString('es-CO')} — {new Date(per.hasta).toLocaleDateString('es-CO')}
+                                        <span className="text-zinc-600">({per.dias} {Number(per.dias) === 1 ? 'dia' : 'dias'})</span>
+                                    </div>
+
+                                    {/* KPIs */}
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+                                        <div className="bg-zinc-900 border border-green-500/30 p-5 rounded-2xl shadow-lg">
+                                            <p className="text-green-400 text-[10px] uppercase tracking-widest font-bold mb-1">Ingresos por Ventas</p>
+                                            <h3 className="text-2xl font-bold text-white">{fmt(v.neto)}</h3>
+                                            <span className="text-[10px] text-zinc-400 bg-zinc-950/50 inline-block px-2 py-0.5 rounded mt-2">
+                                                {v.num_ventas} ventas · ticket {fmt(v.ticket_promedio)}
+                                            </span>
+                                        </div>
+
+                                        <div className={`bg-zinc-900 border p-5 rounded-2xl shadow-lg ${c.es_completo ? 'border-fire/40' : 'border-yellow-500/50'}`}>
+                                            <p className="text-fire text-[10px] uppercase tracking-widest font-bold mb-1">Costo de Ventas (COGS)</p>
+                                            <h3 className="text-2xl font-bold text-white">{fmt(c.snapshot)}</h3>
+                                            {c.es_completo ? (
+                                                <span className="text-[10px] text-zinc-400 bg-zinc-950/50 inline-block px-2 py-0.5 rounded mt-2">
+                                                    Costo historico inmutable
+                                                </span>
+                                            ) : (
+                                                <span className="text-[10px] text-yellow-300 bg-yellow-500/10 inline-block px-2 py-0.5 rounded mt-2">
+                                                    Incompleto: {c.movimientos_sin_snapshot} movs. sin costo
+                                                </span>
+                                            )}
+                                        </div>
+
+                                        <div className="bg-zinc-900 border border-gold/40 p-5 rounded-2xl shadow-lg">
+                                            <p className="text-gold text-[10px] uppercase tracking-widest font-bold mb-1">Utilidad Bruta</p>
+                                            <h3 className="text-2xl font-bold text-gold">{fmt(r.utilidad_bruta)}</h3>
+                                            <span className="text-[10px] text-yellow-300/60 bg-gold/10 inline-block px-2 py-0.5 rounded mt-2">
+                                                Margen bruto: {r.margen_bruto_pct}%
+                                            </span>
+                                        </div>
+
+                                        <div className="bg-zinc-900 border border-red-500/30 p-5 rounded-2xl shadow-lg">
+                                            <p className="text-red-400 text-[10px] uppercase tracking-widest font-bold mb-1">Egresos del Periodo</p>
+                                            <h3 className="text-2xl font-bold text-red-400">{fmt(e.total)}</h3>
+                                            <span className="text-[10px] text-zinc-400 bg-zinc-950/50 inline-block px-2 py-0.5 rounded mt-2">
+                                                Nomina + gastos + costos fijos y variables
+                                            </span>
+                                        </div>
+
+                                        <div className="bg-zinc-900 border border-blue-500/40 p-5 rounded-2xl shadow-lg">
+                                            <p className="text-blue-400 text-[10px] uppercase tracking-widest font-bold mb-1">Resultado Operativo</p>
+                                            <h3 className={`text-2xl font-bold ${Number(r.resultado_operativo) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                                {fmt(r.resultado_operativo)}
                                             </h3>
                                             <span className="text-[10px] text-blue-300/60 bg-blue-500/10 inline-block px-2 py-0.5 rounded mt-2">
-                                                Margen Neto: {((salesKPIs?.totalVentas || 0) > 0 ? (utilidad / (salesKPIs?.totalVentas || 1) * 100).toFixed(1) : '0')}%
-                                            </span>
-                                        </>
-                                    );
-                                })()}
-                            </div>
-
-                        </div>
-
-                        {/* Detailed Financial Income Statement Table */}
-                        <div className="bg-zinc-900 border border-zinc-800/60 rounded-2xl overflow-hidden shadow-2xl">
-                            <div className="p-5 border-b border-zinc-800 bg-zinc-950/40 flex justify-between items-center">
-                                <h3 className="font-serif font-bold text-white text-lg">Estado de Resultados Consolidado</h3>
-                                <span className="text-xs text-zinc-500">Base de Cálculo: Ventas, Consumo de Recetas e Egresos</span>
-                            </div>
-                            <div className="p-6 space-y-4">
-                                <div className="flex justify-between items-center py-2.5 border-b border-zinc-800 text-sm">
-                                    <span className="font-semibold text-zinc-200">(+) Ingresos Brutos por Ventas</span>
-                                    <span className="font-bold text-green-400">${(salesKPIs?.totalVentas || 0).toLocaleString()}</span>
-                                </div>
-                                <div className="flex justify-between items-center py-2.5 border-b border-zinc-800 text-sm">
-                                    <span className="font-semibold text-zinc-300">(-) Costo de Recetas e Insumos (COGS)</span>
-                                    <span className="font-bold text-fire">-${Math.round(cogsTotal || 0).toLocaleString()}</span>
-                                </div>
-                                <div className="flex justify-between items-center py-3 bg-zinc-950/60 px-4 rounded-xl text-base font-bold">
-                                    <span className="text-gold">(=) UTILIDAD BRUTA</span>
-                                    <span className="text-gold">${Math.round((salesKPIs?.totalVentas || 0) - (cogsTotal || 0)).toLocaleString()}</span>
-                                </div>
-                                <div className="flex justify-between items-center py-2.5 border-b border-zinc-800 text-sm">
-                                    <span className="font-semibold text-zinc-300">(-) Nómina y Liquidaciones Pagadas</span>
-                                    <span className="font-bold text-red-400">-${liquidacionesList.filter(l => l.estado === 'PAGADO').reduce((sum, l) => sum + Number(l.monto_calculado || 0), 0).toLocaleString()}</span>
-                                </div>
-                                <div className="flex justify-between items-center py-2.5 border-b border-zinc-800 text-sm">
-                                    <span className="font-semibold text-zinc-300">(-) Gastos Operativos Registrados</span>
-                                    <span className="font-bold text-red-400">-${gastosList.filter(g => g.estado !== 'ANULADO').reduce((sum, g) => sum + Number(g.monto || 0), 0).toLocaleString()}</span>
-                                </div>
-                                <div className="flex justify-between items-center py-2.5 border-b border-zinc-800 text-sm">
-                                    <span className="font-semibold text-zinc-300">(-) Otros Egresos de Caja</span>
-                                    <span className="font-bold text-red-400">-${movementsList.filter(m => m.tipo === 'EGRESO' && !m.compra_id && !m.gasto_id && !m.liquidacion_id && m.tipo_operacion !== 'TRANSFERENCIA_INTERNA').reduce((sum, m) => sum + Number(m.monto || 0), 0).toLocaleString()}</span>
-                                </div>
-                                {(() => {
-                                    const nominaPagada = liquidacionesList.filter(l => l.estado === 'PAGADO').reduce((sum, l) => sum + Number(l.monto_calculado || 0), 0);
-                                    const gastosRegistrados = gastosList.filter(g => g.estado !== 'ANULADO').reduce((sum, g) => sum + Number(g.monto || 0), 0);
-                                    const otrosEgresos = movementsList.filter(m => m.tipo === 'EGRESO' && !m.compra_id && !m.gasto_id && !m.liquidacion_id && m.tipo_operacion !== 'TRANSFERENCIA_INTERNA').reduce((sum, m) => sum + Number(m.monto || 0), 0);
-                                    const totalGastos = nominaPagada + gastosRegistrados + otrosEgresos;
-                                    const resultado = (salesKPIs?.totalVentas || 0) - (cogsTotal || 0) - totalGastos;
-                                    return (
-                                        <div className="flex justify-between items-center py-4 bg-zinc-950 px-4 rounded-xl text-lg font-bold border border-zinc-800">
-                                            <span className="text-white">(=) RESULTADO OPERATIVO NETO</span>
-                                            <span className={resultado >= 0 ? 'text-green-400' : 'text-red-400'}>
-                                                ${Math.round(resultado).toLocaleString()}
+                                                Margen contribucion: {r.margen_contribucion_pct}%
                                             </span>
                                         </div>
-                                    );
-                                })()}
-                            </div>
-                        </div>
+                                    </div>
 
-                        {/* Costos Fijos/Variables + Punto de Equilibrio */}
-                        <div className="bg-zinc-900 border border-zinc-800/60 rounded-2xl overflow-hidden shadow-2xl">
-                            <div className="p-5 border-b border-zinc-800 bg-zinc-950/40 flex justify-between items-center">
-                                <h3 className="font-serif font-bold text-white text-lg">Análisis de Costos y Punto de Equilibrio</h3>
-                                <button onClick={() => setActiveTab('configuracion')} className="text-[10px] font-bold uppercase text-fire hover:text-orange-300 transition-colors">Configurar Costos →</button>
-                            </div>
-                            <div className="p-6">
-                                {(() => {
-                                    const costosFijos = costosList.filter(c => c.tipo_costo === 'FIJO' && c.activo);
-                                    const costosVariables = costosList.filter(c => c.tipo_costo === 'VARIABLE' && c.activo);
-
-                                    // Normalize costs to monthly
-                                    const toMonthly = (monto, periodicidad) => {
-                                        const n = Number(monto || 0);
-                                        switch (periodicidad) {
-                                            case 'DIARIO': return n * 30;
-                                            case 'SEMANAL': return n * 4.33;
-                                            case 'QUINCENAL': return n * 2;
-                                            case 'MENSUAL': return n;
-                                            case 'ANUAL': return n / 12;
-                                            default: return n;
-                                        }
-                                    };
-
-                                    const totalFijosMensual = costosFijos.reduce((sum, c) => sum + toMonthly(c.monto, c.periodicidad), 0);
-                                    const totalVariablesMensual = costosVariables.reduce((sum, c) => sum + toMonthly(c.monto, c.periodicidad), 0);
-                                    const ventas = salesKPIs?.totalVentas || 0;
-                                    const cogs = cogsTotal || 0;
-
-                                    const margenBruto = ventas - cogs;
-                                    const margenContribucion = margenBruto - totalVariablesMensual;
-                                    const margenContribucionPct = ventas > 0 ? (margenContribucion / ventas) * 100 : 0;
-                                    const puntoEquilibrio = margenContribucionPct > 0 ? totalFijosMensual / (margenContribucionPct / 100) : 0;
-
-                                    const hasCosts = costosFijos.length > 0 || costosVariables.length > 0;
-
-                                    if (!hasCosts) {
-                                        return (
-                                            <div className="text-center py-8 space-y-2">
-                                                <p className="text-zinc-500 text-sm">No hay costos configurados.</p>
-                                                <p className="text-zinc-600 text-xs">Configura costos fijos y variables en la pestaña Configuración para calcular el punto de equilibrio.</p>
+                                    {/* Estado de Resultados en cascada */}
+                                    <div className="bg-zinc-900 border border-zinc-800/60 rounded-2xl overflow-hidden shadow-2xl">
+                                        <div className="p-5 border-b border-zinc-800 bg-zinc-950/40">
+                                            <h3 className="font-serif font-bold text-white text-lg">Estado de Resultados</h3>
+                                            <p className="text-[10px] text-zinc-500 mt-0.5">Calculado por el servidor · un solo periodo para todos los rubros</p>
+                                        </div>
+                                        <div className="p-6 space-y-1">
+                                            {[
+                                                { l: '(+) Ingresos por ventas', val: v.neto, cls: 'text-green-400', strong: true },
+                                                { l: '(-) Costo de ventas (COGS)', val: -Number(c.snapshot || 0), cls: 'text-fire' },
+                                                { l: '(=) UTILIDAD BRUTA', val: r.utilidad_bruta, cls: 'text-gold', divider: true, strong: true },
+                                                { l: '(-) Nomina pagada', val: -Number(e.nomina_pagada || 0), cls: 'text-red-400' },
+                                                { l: '(-) Gastos operativos', val: -Number(e.gastos_operativos || 0), cls: 'text-red-400' },
+                                                { l: '(-) Otros egresos de caja', val: -Number(e.otros_egresos_caja || 0), cls: 'text-red-400' },
+                                                { l: `(-) Costos fijos (prorrateados a ${per.dias}d)`, val: -Number(e.costos_fijos || 0), cls: 'text-red-400' },
+                                                { l: `(-) Costos variables (prorrateados a ${per.dias}d)`, val: -Number(e.costos_variables || 0), cls: 'text-red-400' },
+                                            ].map((row, idx) => (
+                                                <div
+                                                    key={idx}
+                                                    className={`flex justify-between items-center py-2.5 text-sm ${row.divider ? 'border-y border-zinc-700 my-2 bg-zinc-950/40 px-3 rounded' : 'border-b border-zinc-800/60'}`}
+                                                >
+                                                    <span className={row.strong ? 'font-bold text-zinc-100' : 'font-semibold text-zinc-300'}>{row.l}</span>
+                                                    <span className={`font-bold font-mono ${row.cls}`}>{fmt(row.val)}</span>
+                                                </div>
+                                            ))}
+                                            <div className="flex justify-between items-center py-4 bg-zinc-950 px-4 rounded-xl text-lg font-bold border border-zinc-800 mt-3">
+                                                <span className="text-white">(=) RESULTADO OPERATIVO</span>
+                                                <span className={`font-mono ${Number(r.resultado_operativo) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                                    {fmt(r.resultado_operativo)}
+                                                </span>
                                             </div>
-                                        );
-                                    }
+                                        </div>
+                                    </div>
 
-                                    return (
-                                        <div className="space-y-4">
-                                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                                <div className="bg-zinc-950 rounded-xl p-4 border border-blue-500/20">
-                                                    <p className="text-[10px] font-bold uppercase tracking-widest text-blue-400 mb-1">Costos Fijos (Mensual)</p>
-                                                    <p className="text-xl font-bold text-white">${Math.round(totalFijosMensual).toLocaleString()}</p>
-                                                    <p className="text-[10px] text-zinc-500 mt-1">{costosFijos.length} costo{costosFijos.length !== 1 ? 's' : ''} activo{costosFijos.length !== 1 ? 's' : ''}</p>
-                                                </div>
-                                                <div className="bg-zinc-950 rounded-xl p-4 border border-orange-500/20">
-                                                    <p className="text-[10px] font-bold uppercase tracking-widest text-orange-400 mb-1">Costos Variables (Mensual)</p>
-                                                    <p className="text-xl font-bold text-white">${Math.round(totalVariablesMensual).toLocaleString()}</p>
-                                                    <p className="text-[10px] text-zinc-500 mt-1">{costosVariables.length} costo{costosVariables.length !== 1 ? 's' : ''} activo{costosVariables.length !== 1 ? 's' : ''}</p>
-                                                </div>
-                                                <div className="bg-zinc-950 rounded-xl p-4 border border-purple-500/20">
-                                                    <p className="text-[10px] font-bold uppercase tracking-widest text-purple-400 mb-1">Margen de Contribución</p>
-                                                    <p className="text-xl font-bold text-white">${Math.round(margenContribucion).toLocaleString()}</p>
-                                                    <p className="text-[10px] text-zinc-500 mt-1">{margenContribucionPct.toFixed(1)}% de ventas</p>
-                                                </div>
+                                    {/* Fuera del resultado */}
+                                    {(Number(f.retiros_socios) > 0 || Number(f.compras_recibidas) > 0 || Number(e.nomina_pendiente) > 0) && (
+                                        <div className="bg-zinc-900 border border-zinc-800/60 rounded-2xl overflow-hidden">
+                                            <div className="p-5 border-b border-zinc-800 bg-zinc-950/40">
+                                                <h3 className="font-serif font-bold text-white text-base">Movimientos fuera del Estado de Resultados</h3>
+                                                <p className="text-[10px] text-zinc-500 mt-0.5">Salen de caja, pero no son gastos operativos del periodo</p>
                                             </div>
-
-                                            <div className={`rounded-xl p-5 border ${puntoEquilibrio > 0 && ventas >= puntoEquilibrio ? 'border-green-500/30 bg-green-500/5' : 'border-fire/30 bg-fire/5'}`}>
-                                                <div className="flex items-center justify-between flex-wrap gap-2">
-                                                    <div>
-                                                        <p className="text-[10px] font-bold uppercase tracking-widest text-fire mb-1">📊 Punto de Equilibrio</p>
-                                                        <p className="text-2xl font-bold text-white">{puntoEquilibrio > 0 ? `$${Math.round(puntoEquilibrio).toLocaleString()}` : 'Datos insuficientes'}</p>
-                                                        <p className="text-[10px] text-zinc-400 mt-1">Ventas necesarias para cubrir costos fijos + variables + COGS</p>
-                                                    </div>
-                                                    {puntoEquilibrio > 0 && (
-                                                        <div className="text-right">
-                                                            <p className={`text-lg font-bold ${ventas >= puntoEquilibrio ? 'text-green-400' : 'text-red-400'}`}>
-                                                                {ventas >= puntoEquilibrio ? '✅ SUPERADO' : '⚠️ POR DEBAJO'}
-                                                            </p>
-                                                            <p className="text-[10px] text-zinc-400">Ventas actuales: ${ventas.toLocaleString()}</p>
+                                            <div className="p-5 space-y-2">
+                                                {Number(f.retiros_socios) > 0 && (
+                                                    <div className="flex justify-between items-start gap-4 text-xs py-2 border-b border-zinc-800/60">
+                                                        <div>
+                                                            <span className="text-zinc-200 font-semibold">Retiros de socios</span>
+                                                            <p className="text-zinc-500 text-[10px] mt-0.5">Distribucion de utilidades, no un gasto. Antes se restaba del resultado.</p>
                                                         </div>
-                                                    )}
-                                                </div>
-                                            </div>
-
-                                            {/* Cost detail table */}
-                                            <div className="space-y-2">
-                                                {costosFijos.map(c => (
-                                                    <div key={c.id} className="flex justify-between items-center text-xs px-2 py-1.5 rounded bg-zinc-950/50">
-                                                        <span className="text-zinc-400"><span className="text-blue-400 font-bold">FIJO</span> · {c.nombre} ({c.periodicidad})</span>
-                                                        <span className="font-bold text-zinc-300">${Number(c.monto).toLocaleString()} → ${Math.round(toMonthly(c.monto, c.periodicidad)).toLocaleString()}/mes</span>
+                                                        <span className="font-mono font-bold text-purple-400 shrink-0">{fmt(f.retiros_socios)}</span>
                                                     </div>
-                                                ))}
-                                                {costosVariables.map(c => (
-                                                    <div key={c.id} className="flex justify-between items-center text-xs px-2 py-1.5 rounded bg-zinc-950/50">
-                                                        <span className="text-zinc-400"><span className="text-orange-400 font-bold">VAR</span> · {c.nombre} ({c.periodicidad})</span>
-                                                        <span className="font-bold text-zinc-300">${Number(c.monto).toLocaleString()} → ${Math.round(toMonthly(c.monto, c.periodicidad)).toLocaleString()}/mes</span>
+                                                )}
+                                                {Number(f.compras_recibidas) > 0 && (
+                                                    <div className="flex justify-between items-start gap-4 text-xs py-2 border-b border-zinc-800/60">
+                                                        <div>
+                                                            <span className="text-zinc-200 font-semibold">Compras recibidas</span>
+                                                            <p className="text-zinc-500 text-[10px] mt-0.5">Se convierten en inventario; impactan el resultado como COGS al venderse.</p>
+                                                        </div>
+                                                        <span className="font-mono font-bold text-blue-400 shrink-0">{fmt(f.compras_recibidas)}</span>
                                                     </div>
-                                                ))}
+                                                )}
+                                                {Number(e.nomina_pendiente) > 0 && (
+                                                    <div className="flex justify-between items-start gap-4 text-xs py-2">
+                                                        <div>
+                                                            <span className="text-zinc-200 font-semibold">Liquidaciones pendientes</span>
+                                                            <p className="text-zinc-500 text-[10px] mt-0.5">Generadas pero aun no pagadas. No restadas del resultado.</p>
+                                                        </div>
+                                                        <span className="font-mono font-bold text-yellow-400 shrink-0">{fmt(e.nomina_pendiente)}</span>
+                                                    </div>
+                                                )}
                                             </div>
                                         </div>
-                                    );
-                                })()}
-                            </div>
-                        </div>
+                                    )}
+
+                                    {/* Punto de equilibrio y detalle de costos */}
+                                    <div className="bg-zinc-900 border border-zinc-800/60 rounded-2xl overflow-hidden shadow-2xl">
+                                        <div className="p-5 border-b border-zinc-800 bg-zinc-950/40 flex justify-between items-center flex-wrap gap-2">
+                                            <h3 className="font-serif font-bold text-white text-lg">Punto de Equilibrio</h3>
+                                            <button onClick={() => setActiveTab('configuracion')} className="text-[10px] font-bold uppercase text-fire hover:text-orange-300 transition-colors">
+                                                Configurar costos →
+                                            </button>
+                                        </div>
+                                        <div className="p-6 space-y-4">
+                                            {!r.punto_equilibrio_calculable ? (
+                                                <p className="text-zinc-500 text-sm text-center py-4">
+                                                    No calculable: se requieren ventas y un margen de contribucion positivo en el periodo.
+                                                </p>
+                                            ) : (
+                                                <div className={`rounded-xl p-5 border ${r.supera_equilibrio ? 'border-green-500/30 bg-green-500/5' : 'border-fire/30 bg-fire/5'}`}>
+                                                    <div className="flex items-center justify-between flex-wrap gap-3">
+                                                        <div>
+                                                            <p className="text-[10px] font-bold uppercase tracking-widest text-fire mb-1">Ventas necesarias para cubrir costos fijos</p>
+                                                            <p className="text-2xl font-bold text-white font-mono">{fmt(r.punto_equilibrio)}</p>
+                                                            <p className="text-[10px] text-zinc-400 mt-1">
+                                                                Con margen de contribucion de {r.margen_contribucion_pct}% ({fmt(r.margen_contribucion)})
+                                                            </p>
+                                                        </div>
+                                                        <div className="text-right">
+                                                            <p className={`text-lg font-bold ${r.supera_equilibrio ? 'text-green-400' : 'text-red-400'}`}>
+                                                                {r.supera_equilibrio ? 'SUPERADO' : 'POR DEBAJO'}
+                                                            </p>
+                                                            <p className="text-[10px] text-zinc-400">Ventas del periodo: {fmt(v.neto)}</p>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {detalle.length > 0 ? (
+                                                <div className="space-y-1.5">
+                                                    <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-2">
+                                                        Costos vigentes en el periodo
+                                                    </p>
+                                                    {detalle.map((d, idx) => (
+                                                        <div key={idx} className="flex justify-between items-center gap-3 text-xs px-3 py-2 rounded-lg bg-zinc-950/50">
+                                                            <span className="text-zinc-400 min-w-0">
+                                                                <span className={`font-bold ${d.tipo === 'FIJO' ? 'text-blue-400' : 'text-orange-400'}`}>{d.tipo}</span>
+                                                                {' · '}{d.nombre}
+                                                                <span className="text-zinc-600"> ({d.periodicidad})</span>
+                                                            </span>
+                                                            <span className="font-mono text-zinc-300 shrink-0 text-right">
+                                                                {fmt(d.monto_base)}
+                                                                <span className="text-zinc-600"> × {d.dias_vigentes}d → </span>
+                                                                <span className="font-bold">{fmt(d.monto_periodo)}</span>
+                                                            </span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            ) : (
+                                                <p className="text-zinc-600 text-xs text-center py-2">
+                                                    No hay costos fijos ni variables vigentes en este periodo.
+                                                </p>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })()}
                     </div>
                 )}
 
