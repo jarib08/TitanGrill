@@ -1684,12 +1684,14 @@ const AdminDashboard = () => {
 
             if (detErr) throw detErr;
 
-            // 3. F6-05: Recibir inmediatamente con egreso financiero
+            // 3. F6-05: Recibir inmediatamente con egreso financiero e idempotencia
             if (shouldReceiveImmediate) {
+                const operationKey = crypto.randomUUID();
                 const { data: recData, error: recErr } = await supabase
                     .rpc('recibir_compra', {
                         p_compra_id: cmpData.id,
-                        p_metodo_pago: compraForm.metodo_pago
+                        p_metodo_pago: compraForm.metodo_pago,
+                        p_idempotency_key: operationKey
                     });
                 if (recErr) throw recErr;
                 if (recData && !recData.success) throw new Error(recData.message);
@@ -1716,14 +1718,16 @@ const AdminDashboard = () => {
         setShowRecibirModal(compra);
     };
 
-    // F6-05: Confirmar recepción con egreso financiero
+    // F6-05: Confirmar recepción con egreso financiero e idempotencia
     const handleConfirmarRecibir = async () => {
         if (!showRecibirModal) return;
         setActionLoading(true);
         try {
+            const operationKey = crypto.randomUUID();
             const { data, error } = await supabase.rpc('recibir_compra', {
                 p_compra_id: showRecibirModal.id,
-                p_metodo_pago: recibirMetodoPago
+                p_metodo_pago: recibirMetodoPago,
+                p_idempotency_key: operationKey
             });
             if (error) throw error;
             if (data && !data.success) throw new Error(data.message);
@@ -1731,7 +1735,8 @@ const AdminDashboard = () => {
             setShowRecibirModal(null);
             await fetchCompras();
             await fetchInventario();
-            alert(`Compra recibida. Inventario actualizado. Egreso de $${showRecibirModal.total?.toLocaleString() || 0} registrado en caja (${recibirMetodoPago}).`);
+            const recoveryMsg = data.recovered ? ' (operación verificada y recuperada)' : '';
+            alert(`Compra recibida${recoveryMsg}. Inventario actualizado. Egreso de $${showRecibirModal.total?.toLocaleString() || 0} registrado en caja (${recibirMetodoPago}).`);
         } catch (err) {
             console.error(err);
             alert('Error al recibir compra: ' + err.message);
@@ -1747,9 +1752,11 @@ const AdminDashboard = () => {
         }
         setActionLoading(true);
         try {
+            const operationKey = crypto.randomUUID();
             const { data, error } = await supabase.rpc('anular_compra', {
                 p_compra_id: showAnularModal.id,
-                p_motivo: anularMotivo
+                p_motivo: anularMotivo,
+                p_idempotency_key: operationKey
             });
 
             if (error) throw error;
@@ -1759,7 +1766,8 @@ const AdminDashboard = () => {
             setAnularMotivo('');
             await fetchCompras();
             await fetchInventario();
-            alert('Compra anulada y stock ajustado.');
+            const recoveryMsg = data.recovered ? ' (operación verificada y recuperada)' : '';
+            alert(`Compra anulada y stock ajustado${recoveryMsg}.`);
         } catch (err) {
             console.error(err);
             alert('Error al anular la compra: ' + err.message);

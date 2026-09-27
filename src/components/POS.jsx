@@ -8,10 +8,13 @@ import NumericInput from './ui/NumericInput';
 // Products loaded dynamically from Supabase
 const PENDING_SALE_KEY = 'titan_grill_pending_sale';
 const SALE_TIMEOUT_MS = 20000; // 20 seconds
+const INIT_POS_TIMEOUT_MS = 12000; // 12 seconds initial load timeout
 
 const POS = () => {
     const navigate = useNavigate();
     const isSubmittingRef = useRef(false); // B18: double-click guard
+    const isInitializingRef = useRef(false); // Guard against concurrent POS initialization
+    const initGenerationRef = useRef(0); // FD2.1.1-001: Generation counter to ignore late initializations
     const [worker, setWorker] = useState(null);
     const [cart, setCart] = useState([]);
     const [categoryFilter, setCategoryFilter] = useState('Todos');
@@ -50,6 +53,7 @@ const POS = () => {
     // Cash session states
     const [activeSession, setActiveSession] = useState(null);
     const [sessionLoading, setSessionLoading] = useState(true);
+    const [initError, setInitError] = useState(null);
     const [openCashAmount, setOpenCashAmount] = useState(50000);
     const [openNequiAmount, setOpenNequiAmount] = useState(0);
     const [openBancoAmount, setOpenBancoAmount] = useState(0);
@@ -152,23 +156,110 @@ const POS = () => {
         }
     };
 
-    useEffect(() => {
-        const getWorkerProfile = async () => {
-            const { data: { session } } = await supabase.auth.getSession();
-            if (session?.user) {
-                const { data: profile } = await supabase
-                    .from('perfiles_trabajadores')
-                    .select('*')
-                    .eq('id', session.user.id)
-                    .single();
+    const initPOS = async () => {
+        if (isInitializingRef.current) return;
+        isInitializingRef.current = true;
+
+        const myGeneration = ++initGenerationRef.current;
+
+        setSessionLoading(true);
+        setInitError(null);
+
+        let timeoutId = null;
+
+        try {
+            const initPromise = (async () => {
+                // Step 1: Auth Session
+                const { data: authData, error: authError } = await supabase.auth.getSession();
+                if (authError) throw authError;
+
+                if (myGeneration !== initGenerationRef.current) return;
+
+                if (!authData?.session?.user) {
+                    setWorker(null);
+                    setActiveSession(null);
+                    return;
+                }
+
+                const userId = authData.session.user.id;
+
+                // Step 2 & 3: Worker Profile and Cash Session in parallel (F-D3-001)
+                const [profileRes, cashSessionRes] = await Promise.all([
+                    supabase
+                        .from('perfiles_trabajadores')
+                        .select('*')
+                        .eq('id', userId)
+                        .single(),
+                    supabase
+                        .from('sesiones_caja')
+                        .select('*')
+                        .eq('trabajador_id', userId)
+                        .eq('estado', 'ABIERTA')
+                        .maybeSingle()
+                ]);
+
+                const { data: profile, error: profileError } = profileRes;
+                const { data: cashSession, error: cashSessionError } = cashSessionRes;
+
+                if (profileError) throw profileError;
+                if (!profile) throw new Error('No se encontró el perfil del trabajador en el sistema.');
+                if (cashSessionError) throw cashSessionError;
+
+                if (myGeneration !== initGenerationRef.current) return;
+
                 setWorker(profile);
-                if (profile) {
-                    await fetchSession(profile.id);
+
+                if (cashSession) {
+                    setActiveSession(cashSession);
+                    // Step 4: Expected Cash
+                    await fetchExpectedCash(cashSession.id);
+                    if (myGeneration !== initGenerationRef.current) return;
+                } else {
+                    setActiveSession(null);
+                }
+            })();
+
+            const timeoutPromise = new Promise((_, reject) => {
+                timeoutId = setTimeout(() => {
+                    reject(new Error('TIMEOUT_INIT'));
+                }, INIT_POS_TIMEOUT_MS);
+            });
+
+            await Promise.race([initPromise, timeoutPromise]);
+            if (myGeneration === initGenerationRef.current) {
+                fetchProducts().catch(err => console.warn('Error cargando productos:', err));
+            }
+        } catch (err) {
+            console.error('Error en inicialización del POS:', err);
+            if (err.message === 'TIMEOUT_INIT') {
+                // Invalidate this generation so any late resolution from initPromise is IGNORED
+                initGenerationRef.current++;
+                if (myGeneration + 1 === initGenerationRef.current) {
+                    setInitError('La conexión con la base de datos o autenticación tardó demasiado tiempo (Timeout 12s).');
+                }
+            } else {
+                if (myGeneration === initGenerationRef.current) {
+                    setInitError(err.message || 'Error de red o comunicación al inicializar el POS.');
                 }
             }
+        } finally {
+            if (timeoutId) clearTimeout(timeoutId);
+            // Only deactivate loading if no NEWER initialization attempt has started
+            if (myGeneration === initGenerationRef.current || myGeneration + 1 === initGenerationRef.current) {
+                setSessionLoading(false);
+                isInitializingRef.current = false;
+            }
+        }
+    };
+
+    useEffect(() => {
+        initPOS();
+        return () => {
+            // Cleanup on unmount: invalidate any active generation token
+            // eslint-disable-next-line react-hooks/exhaustive-deps
+            initGenerationRef.current++;
+            isInitializingRef.current = false;
         };
-        getWorkerProfile();
-        fetchProducts();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
@@ -801,8 +892,41 @@ const POS = () => {
 
     if (sessionLoading) {
         return (
-            <div className="min-h-screen bg-zinc-950 text-white flex items-center justify-center font-serif text-xl animate-pulse">
-                Cargando caja...
+            <div className="min-h-screen bg-zinc-950 text-white flex flex-col items-center justify-center font-serif text-xl p-6">
+                <RefreshCw size={36} className="animate-spin text-fire mb-4" />
+                <p className="animate-pulse">Cargando caja...</p>
+            </div>
+        );
+    }
+
+    if (initError) {
+        return (
+            <div className="min-h-screen bg-zinc-950 text-white flex items-center justify-center p-6 font-sans">
+                <div className="w-full max-w-md bg-zinc-900 border border-red-900/40 rounded-3xl p-8 shadow-2xl text-center space-y-6">
+                    <div className="w-14 h-14 bg-red-500/10 border border-red-500/30 text-red-500 rounded-full flex items-center justify-center mx-auto">
+                        <AlertCircle size={28} />
+                    </div>
+                    <div>
+                        <h2 className="text-xl font-bold font-serif text-white">Error de Inicialización</h2>
+                        <p className="text-zinc-400 text-xs mt-2">{initError}</p>
+                    </div>
+                    <div className="space-y-3 pt-2">
+                        <button
+                            onClick={initPOS}
+                            className="w-full bg-fire hover:bg-orange-700 text-white py-3.5 rounded-xl font-bold transition-all shadow-lg shadow-fire/10 active:scale-[0.99] uppercase text-xs tracking-wider flex items-center justify-center gap-2"
+                        >
+                            <RefreshCw size={16} />
+                            Reintentar Carga
+                        </button>
+                        <button
+                            onClick={handleLogout}
+                            className="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-300 py-3 rounded-xl font-bold transition-all text-xs uppercase tracking-wider flex items-center justify-center gap-2 border border-zinc-700"
+                        >
+                            <LogOut size={16} />
+                            Cerrar Sesión
+                        </button>
+                    </div>
+                </div>
             </div>
         );
     }
