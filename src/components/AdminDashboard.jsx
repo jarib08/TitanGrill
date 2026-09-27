@@ -181,6 +181,15 @@ const AdminDashboard = () => {
     // periodo coherente (RPC fn_estado_resultados). Antes se armaba en el
     // cliente mezclando ventas del periodo con COGS, nomina y gastos de toda
     // la historia, y costos fijos normalizados a mes.
+    // Turnos: asistencia explicita y fuente oficial de la nomina.
+    // NO se deriva de sesiones_caja (decision del dueno).
+    const [turnosData, setTurnosData] = useState(null);
+    const [turnosLoading, setTurnosLoading] = useState(false);
+    const [turnosError, setTurnosError] = useState(null);
+    const [turnoSubmitting, setTurnoSubmitting] = useState(false);
+    const [showTarifaModal, setShowTarifaModal] = useState(null); // perfil
+    const [tarifaForm, setTarifaForm] = useState(0);
+
     const [pnl, setPnl] = useState(null);
     const [pnlLoading, setPnlLoading] = useState(false);
     const [pnlError, setPnlError] = useState(null);
@@ -594,6 +603,7 @@ const AdminDashboard = () => {
             fetchMovementsPage(0); // Fase 6.3 — carga página 0 al entrar al tab
         } else if (activeTab === 'liquidaciones') {
             fetchLiqPage(0); // Fase 6.3 — carga página 0 al entrar al tab
+            fetchTurnos();
         } else if (activeTab === 'gastos') {
             fetchCategoriasGastos();
             fetchGastosPage(0);
@@ -981,6 +991,104 @@ const AdminDashboard = () => {
 
     // A1: una sola fuente de verdad para el Estado de Resultados. Todos los
     // rubros salen del MISMO rango de fechas, calculados en SQL.
+    // "Hoy" en hora de Bogota. La jornada de 4pm a 9pm cruza la medianoche en
+    // UTC (21:00Z a 02:00Z), asi que usar la fecha UTC mandaria las ultimas dos
+    // horas de cada jornada al dia siguiente.
+    const hoyBogota = () => {
+        const f = new Intl.DateTimeFormat('en-CA', {
+            timeZone: 'America/Bogota', year: 'numeric', month: '2-digit', day: '2-digit'
+        });
+        return f.format(new Date()); // YYYY-MM-DD
+    };
+
+    const fetchTurnos = async () => {
+        setTurnosLoading(true);
+        setTurnosError(null);
+        try {
+            const hasta = hoyBogota();
+            const desde = new Date(new Date(hasta + 'T12:00:00Z').getTime() - 29 * 86400000)
+                .toISOString().slice(0, 10);
+            const { data, error } = await supabase.rpc('fn_turnos_periodo', { p_desde: desde, p_hasta: hasta });
+            if (error) throw error;
+            if (data && !data.success) throw new Error(data.message);
+            setTurnosData(data);
+        } catch (err) {
+            console.error('Error cargando turnos:', err);
+            setTurnosError(err.message || 'No se pudieron cargar los turnos.');
+            setTurnosData(null);
+        } finally {
+            setTurnosLoading(false);
+        }
+    };
+
+    const handleCerrarYPagarTurno = async (trabajador, cuenta = 'EFECTIVO') => {
+        const hoy = hoyBogota();
+        if (!window.confirm(
+            `¿Cerrar el turno de ${trabajador.nombre} del ${hoy} y pagarle $${Number(trabajador.tarifa_pago || 0).toLocaleString()} en ${cuenta}?`
+        )) return;
+
+        setTurnoSubmitting(true);
+        try {
+            const { data, error } = await supabase.rpc('cerrar_y_pagar_turno', {
+                p_trabajador_id: trabajador.id,
+                p_fecha: hoy,
+                p_cuenta_origen: cuenta
+            });
+            if (error) throw error;
+            if (!data?.success) throw new Error(data?.message || 'No se pudo cerrar el turno.');
+
+            alert(data.message);
+            await fetchTurnos();
+            await fetchLiqPage(liqPage);
+            await fetchEstadoResultados();
+            await fetchSaldoGlobal();
+        } catch (err) {
+            alert('Error: ' + err.message);
+        } finally {
+            setTurnoSubmitting(false);
+        }
+    };
+
+    const handleAnularTurno = async (turno) => {
+        const motivo = window.prompt(`Motivo para anular el turno del ${turno.fecha}:`);
+        if (motivo === null) return;
+
+        setTurnoSubmitting(true);
+        try {
+            const { data, error } = await supabase.rpc('anular_turno', {
+                p_turno_id: turno.id, p_motivo: motivo || 'Sin motivo'
+            });
+            if (error) throw error;
+            if (!data?.success) throw new Error(data?.message || 'No se pudo anular el turno.');
+            alert(data.message);
+            await fetchTurnos();
+        } catch (err) {
+            alert('Error: ' + err.message);
+        } finally {
+            setTurnoSubmitting(false);
+        }
+    };
+
+    const handleGuardarTarifa = async () => {
+        if (!showTarifaModal) return;
+        setTurnoSubmitting(true);
+        try {
+            const { data, error } = await supabase.rpc('actualizar_tarifa_trabajador', {
+                p_trabajador_id: showTarifaModal.id,
+                p_tarifa: Number(tarifaForm)
+            });
+            if (error) throw error;
+            if (!data?.success) throw new Error(data?.message || 'No se pudo actualizar la tarifa.');
+            alert(data.message);
+            setShowTarifaModal(null);
+            await fetchDashboardData();
+        } catch (err) {
+            alert('Error: ' + err.message);
+        } finally {
+            setTurnoSubmitting(false);
+        }
+    };
+
     const fetchEstadoResultados = async () => {
         setPnlLoading(true);
         setPnlError(null);
@@ -4591,6 +4699,124 @@ const AdminDashboard = () => {
 
                 {activeTab === 'liquidaciones' && (
                     <div className="space-y-6">
+                        {/* ── TURNOS: asistencia explicita y fuente oficial de la nomina ── */}
+                        <div className="bg-zinc-900 border border-fire/30 rounded-2xl overflow-hidden shadow-2xl">
+                            <div className="p-5 border-b border-zinc-800 bg-zinc-950/40">
+                                <h2 className="font-serif font-bold text-white text-lg flex items-center gap-2">
+                                    <Clock size={18} className="text-fire" />
+                                    Turnos trabajados
+                                </h2>
+                                <p className="text-[10px] text-zinc-500 mt-1">
+                                    Un turno = un día efectivamente trabajado. Al cerrarlo se paga de inmediato y queda
+                                    registrado para que no se pague dos veces el mismo día.
+                                </p>
+                            </div>
+
+                            {/* Cerrar turno de hoy, por trabajador */}
+                            <div className="p-5 border-b border-zinc-800/60 space-y-3">
+                                {staffList.filter(m => m.rol === 'TRABAJADOR' && m.estado === 'ACTIVO').length === 0 ? (
+                                    <p className="text-zinc-500 text-xs">No hay trabajadores activos. Los turnos son solo para perfiles con rol TRABAJADOR.</p>
+                                ) : staffList.filter(m => m.rol === 'TRABAJADOR' && m.estado === 'ACTIVO').map(m => {
+                                    const hoy = hoyBogota();
+                                    const yaHoy = (turnosData?.turnos || []).find(
+                                        t => t.trabajador_id === m.id && t.fecha === hoy && t.estado !== 'ANULADO'
+                                    );
+                                    const sinTarifa = !Number(m.tarifa_pago);
+                                    return (
+                                        <div key={m.id} className="flex flex-wrap items-center justify-between gap-3 bg-zinc-950/50 rounded-xl p-4">
+                                            <div>
+                                                <p className="font-bold text-zinc-100 text-sm">{m.nombre}</p>
+                                                <p className="text-[10px] text-zinc-500 mt-0.5">
+                                                    {sinTarifa
+                                                        ? 'Sin tarifa por turno configurada'
+                                                        : `$${Number(m.tarifa_pago).toLocaleString()} por turno · hoy ${hoy}`}
+                                                </p>
+                                            </div>
+                                            {yaHoy ? (
+                                                <span className={`text-[10px] font-bold uppercase tracking-wider px-3 py-2 rounded-lg ${
+                                                    yaHoy.estado === 'PAGADO'
+                                                        ? 'bg-green-500/10 text-green-400 border border-green-500/30'
+                                                        : 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/30'
+                                                }`}>
+                                                    {yaHoy.estado === 'PAGADO' ? 'Turno de hoy ya pagado' : 'Turno de hoy registrado, sin pagar'}
+                                                </span>
+                                            ) : (
+                                                <button
+                                                    onClick={() => handleCerrarYPagarTurno(m)}
+                                                    disabled={turnoSubmitting || sinTarifa}
+                                                    className="bg-fire hover:bg-orange-700 disabled:opacity-40 disabled:cursor-not-allowed text-white px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-2 transition-colors"
+                                                    title={sinTarifa ? 'Configure la tarifa por turno en la pestaña Trabajadores' : ''}
+                                                >
+                                                    <Check size={14} />
+                                                    Cerrar turno y pagar {sinTarifa ? '' : `$${Number(m.tarifa_pago).toLocaleString()}`}
+                                                </button>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+
+                            {/* Historial de los ultimos 30 dias */}
+                            <div className="p-5">
+                                {turnosLoading ? (
+                                    <p className="text-zinc-500 text-xs text-center py-3">Cargando turnos...</p>
+                                ) : turnosError ? (
+                                    <div className="bg-red-500/5 border border-red-500/30 rounded-xl p-4">
+                                        <p className="text-red-300 text-xs font-bold">No se pudieron cargar los turnos</p>
+                                        <p className="text-zinc-400 text-[10px] mt-1">{turnosError}</p>
+                                        <button onClick={fetchTurnos} className="mt-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-3 py-1.5 rounded text-[10px] font-bold uppercase">
+                                            Reintentar
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <>
+                                        <div className="flex flex-wrap gap-4 mb-4 text-xs">
+                                            <span className="text-zinc-400">
+                                                Últimos 30 días:
+                                                <span className="text-green-400 font-bold ml-1">{turnosData?.turnos_pagados || 0} pagados</span>
+                                                <span className="text-zinc-600 mx-1">·</span>
+                                                <span className="font-mono font-bold text-zinc-200">${Number(turnosData?.total_pagado || 0).toLocaleString()}</span>
+                                            </span>
+                                            {Number(turnosData?.turnos_pendientes) > 0 && (
+                                                <span className="text-yellow-400">
+                                                    {turnosData.turnos_pendientes} sin pagar · ${Number(turnosData.total_pendiente).toLocaleString()}
+                                                </span>
+                                            )}
+                                        </div>
+                                        {(turnosData?.turnos || []).length === 0 ? (
+                                            <p className="text-zinc-600 text-xs text-center py-3">
+                                                Aún no hay turnos registrados en los últimos 30 días.
+                                            </p>
+                                        ) : (
+                                            <div className="space-y-1.5 max-h-80 overflow-y-auto">
+                                                {turnosData.turnos.map(t => (
+                                                    <div key={t.id} className="flex flex-wrap items-center justify-between gap-2 text-xs px-3 py-2 rounded-lg bg-zinc-950/50">
+                                                        <span className="text-zinc-300 font-mono">{t.fecha}</span>
+                                                        <span className="text-zinc-400 flex-1 min-w-[120px]">{t.trabajador}</span>
+                                                        <span className="font-mono font-bold text-zinc-200">${Number(t.tarifa_aplicada).toLocaleString()}</span>
+                                                        <span className={`text-[9px] font-bold px-2 py-0.5 rounded uppercase ${
+                                                            t.estado === 'PAGADO'     ? 'bg-green-500/10 text-green-400'
+                                                          : t.estado === 'REGISTRADO' ? 'bg-yellow-500/10 text-yellow-400'
+                                                          :                            'bg-zinc-800 text-zinc-500'
+                                                        }`}>{t.estado}</span>
+                                                        {t.estado === 'REGISTRADO' && (
+                                                            <button
+                                                                onClick={() => handleAnularTurno(t)}
+                                                                disabled={turnoSubmitting}
+                                                                className="text-[9px] font-bold uppercase text-red-400 hover:text-red-300 px-2"
+                                                            >
+                                                                Anular
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </>
+                                )}
+                            </div>
+                        </div>
+
                         <div className="flex flex-wrap justify-between items-center gap-4">
                             <div>
                                 <h1 className="text-3xl font-serif text-white">Liquidaciones de Trabajadores</h1>
@@ -5049,6 +5275,16 @@ const AdminDashboard = () => {
                                             <span className="text-zinc-500">Socio de negocio:</span>
                                             <span className="font-bold text-zinc-200">{member.es_socio ? 'SÍ' : 'NO'}</span>
                                         </div>
+                                        {member.rol === 'TRABAJADOR' && (
+                                            <div className="flex justify-between items-center">
+                                                <span className="text-zinc-500">Pago por turno:</span>
+                                                <span className={`font-mono font-bold ${Number(member.tarifa_pago) > 0 ? 'text-green-400' : 'text-yellow-400'}`}>
+                                                    {Number(member.tarifa_pago) > 0
+                                                        ? `$${Number(member.tarifa_pago).toLocaleString()}`
+                                                        : 'sin configurar'}
+                                                </span>
+                                            </div>
+                                        )}
                                     </div>
 
                                     {/* Actions */}
@@ -5061,6 +5297,15 @@ const AdminDashboard = () => {
                                             >
                                                 Cambiar Rol
                                             </button>
+                                            {member.rol === 'TRABAJADOR' && (
+                                                <button
+                                                    onClick={() => { setTarifaForm(Number(member.tarifa_pago) || 0); setShowTarifaModal(member); }}
+                                                    disabled={actionLoading}
+                                                    className="flex-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 py-1.5 rounded text-[10px] font-bold uppercase tracking-wider disabled:opacity-50"
+                                                >
+                                                    Tarifa
+                                                </button>
+                                            )}
                                             <button
                                                 onClick={() => handleToggleStaffStatus(member)}
                                                 disabled={actionLoading}
@@ -6946,6 +7191,66 @@ const AdminDashboard = () => {
                 )}
 
 
+
+                {/* Editor de tarifa por turno.
+                    Usa estado local y guarda SOLO al presionar el boton: NumericInput
+                    dispara onChange en cada tecla, asi que escribir directo a la base
+                    desde ahi persistiria los valores intermedios (1, 15, 150...). */}
+                {showTarifaModal && (
+                    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[999]">
+                        <div className="w-full max-w-sm bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-2xl space-y-5">
+                            <div className="flex justify-between items-center border-b border-zinc-800 pb-3">
+                                <h3 className="text-lg font-bold font-serif text-white flex items-center gap-2">
+                                    <Clock className="text-fire" size={18} />
+                                    Pago por turno
+                                </h3>
+                                <button onClick={() => setShowTarifaModal(null)} className="text-zinc-500 hover:text-white">
+                                    <X size={20} />
+                                </button>
+                            </div>
+
+                            <div>
+                                <p className="text-sm text-zinc-300 font-bold">{showTarifaModal.nombre}</p>
+                                <p className="text-[10px] text-zinc-500 mt-0.5">
+                                    Valor fijo que se paga por cada día trabajado.
+                                </p>
+                            </div>
+
+                            <div>
+                                <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block mb-2">
+                                    Valor por turno ($)
+                                </label>
+                                <NumericInput
+                                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-white focus:border-fire outline-none text-center font-bold text-lg font-mono"
+                                    value={tarifaForm}
+                                    onChange={setTarifaForm}
+                                    min={0}
+                                />
+                            </div>
+
+                            <p className="text-[10px] text-zinc-500 bg-zinc-950/60 rounded-lg p-3 border border-zinc-800">
+                                Los turnos <span className="text-zinc-300">ya registrados conservan su valor</span>.
+                                El cambio solo aplica a los turnos siguientes.
+                            </p>
+
+                            <div className="flex gap-2 pt-1">
+                                <button
+                                    onClick={() => setShowTarifaModal(null)}
+                                    className="flex-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider"
+                                >
+                                    Cancelar
+                                </button>
+                                <button
+                                    onClick={handleGuardarTarifa}
+                                    disabled={turnoSubmitting}
+                                    className="flex-1 bg-fire hover:bg-orange-700 disabled:opacity-50 text-white py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider"
+                                >
+                                    {turnoSubmitting ? 'Guardando...' : 'Guardar'}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 {showGenerarLiqModal && (
                     <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[999]">
