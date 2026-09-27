@@ -244,6 +244,9 @@ Esto es el hallazgo **E1** en su forma más concreta: la lógica de negocio no e
 - [ ] Sellos con read-modify-write (`POS.jsx:1362`, `AdminClientView.jsx:75,105,132`): leen `stamps_count`, suman en JS, escriben. Carrera → sellos perdidos. Y esquivan la RPC `increment_stamps`, que existe justo para eso.
 - [ ] `NumericInput` escribe en la base **en cada tecla** (`AdminDashboard.jsx:5672, 5688`, y antes también el Precio Aprobado). Escribir `15000` persiste `1`, `15`, `150`, `1500`.
 
+### Pendientes de verificación (no modificar antes de demostrarlo)
+- [ ] **`getDateRange()` y el desfase Bogotá/UTC.** Construye las fechas con la hora local del navegador. Con la jornada de 4 a 9 p. m., las ventas de 7–9 p. m. caen en el día siguiente en UTC y podrían estar mal clasificadas en los filtros. **Es una sospecha, no un hallazgo confirmado.** Por decisión del dueño no se toca hasta medirlo: comparar el total del filtro del dashboard contra el mismo período calculado en SQL con `(fecha AT TIME ZONE 'America/Bogota')::date`. Ver detalle en `FASE_G_DISENO_TURNOS_Y_NOMINA.md` §4.
+
 ### Operativo
 - [ ] Hay una **caja abierta desde hace 19 días** (sesión `d23831d6`, abierta 2026-09-07)
 - [ ] `SUPABASE_SERVICE_ROLE_KEY` en `.env` está **inválida** ("Invalid API key")

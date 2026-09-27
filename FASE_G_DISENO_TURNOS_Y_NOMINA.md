@@ -87,7 +87,13 @@ La jornada es **4:00 p. m. – 9:00 p. m. en Bogotá** (UTC−5). En UTC, la jor
 2. Toda comparación de `fecha` contra `timestamptz` (ventas, movimientos) debe convertir: `(v.fecha AT TIME ZONE 'America/Bogota')::date`.
 3. Si esto se ignorara, las últimas dos horas de cada jornada caerían al día siguiente, el índice único fallaría en los casos límite, y se pagarían turnos con fecha equivocada.
 
-> **Pendiente relacionado, no verificado aún:** `getDateRange()` en el frontend construye las fechas con la hora local del navegador. Con este horario, las ventas de 7–9 p. m. podrían estar cayendo en el día siguiente al filtrar. Hay que comprobarlo aparte.
+> **PENDIENTE DE VERIFICACIÓN — no modificar hasta demostrarlo con una prueba real**
+>
+> `getDateRange()` en `AdminDashboard.jsx` construye las fechas con la hora **local del navegador** y las envía como ISO (UTC). Con una jornada de 4 a 9 p. m. en Bogotá, las ventas de 7–9 p. m. caen en el **día siguiente en UTC**, así que podrían estar quedando fuera del filtro "Hoy" y dentro del de mañana.
+>
+> **Esto es una sospecha fundada, no un hallazgo confirmado.** Depende de la zona horaria del equipo que abre el dashboard y de cómo PostgREST interpreta el rango, y no se ha medido.
+>
+> **Decisión del dueño: no tocar `getDateRange()` hasta demostrar con una prueba real si el desfase existe.** La prueba debe comparar, para una fecha con ventas conocidas entre 7 y 9 p. m., el total que devuelve el filtro del dashboard contra el total calculado en SQL con `(fecha AT TIME ZONE 'America/Bogota')::date`. Si coinciden, no hay problema y se cierra el pendiente. Si difieren, la diferencia es exactamente el monto mal clasificado.
 
 ---
 
@@ -213,8 +219,23 @@ Y `fn_estado_resultados` reporta esa misma cifra como nómina del período, **si
 ### CA-10 · Aislamiento de `sesiones_caja`
 Ninguna RPC de turnos lee `sesiones_caja` para decidir asistencia. El único uso permitido es como destino del egreso, vía el parámetro explícito de `pagar_liquidacion`.
 
-### CA-11 · Permisos
-`anon` no puede ejecutar ninguna RPC de turnos ni leer la tabla. Un `TRABAJADOR` ve solo sus propios turnos y **no** puede registrar ni pagar. Un administrador que no sea socio tampoco puede.
+### CA-11 · Permisos — **PARCIAL**
+
+**Verificado:** `anon` no puede ejecutar ninguna RPC de turnos ni leer la tabla (`f / f / f`). Un `TRABAJADOR` **no** puede registrar ni pagar: recibe `Acceso denegado: se requiere rol Socio Administrador`.
+
+**NO verificado — queda PARCIAL:** el aislamiento **entre** trabajadores. Hoy existe un solo perfil con `rol = 'TRABAJADOR'`, y los administradores no pueden tener turnos por decisión de diseño (CA-12). Por lo tanto **no hay turnos ajenos contra los que probar** que un trabajador no ve los de otro.
+
+En la prueba, el trabajador vio 4 turnos — y era correcto, porque los 4 eran suyos. Eso confirma que puede ver los propios, pero **no demuestra** que no vería los de un compañero.
+
+La política es correcta por construcción:
+
+```sql
+USING (public.fn_is_socio() OR trabajador_id = auth.uid())
+```
+
+**Para cerrar este criterio** hace falta un segundo perfil con `rol = 'TRABAJADOR'`. En cuanto exista, la prueba es: registrar un turno para cada uno, autenticarse como el primero, y verificar que `SELECT count(*) FROM turnos` devuelve 1 y no 2.
+
+Hasta entonces, CA-11 permanece marcado **PARCIAL** a propósito, y no debe contarse como aprobado.
 
 ### CA-12 · Solo TRABAJADOR
 `registrar_turno` sobre un perfil con `rol = 'ADMINISTRADOR'` **falla** con mensaje claro.
