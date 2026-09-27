@@ -1,6 +1,7 @@
 import React from 'react';
 import { motion } from 'framer-motion';
 import { X } from 'lucide-react';
+import AppImage from './ui/AppImage';
 
 const SelectionModal = ({ isOpen, onClose, data }) => {
     if (!isOpen || !data) return null;
@@ -47,7 +48,7 @@ const SelectionModal = ({ isOpen, onClose, data }) => {
                                 {section.items.map((item, itemIdx) => (
                                     <div key={itemIdx} className="group">
                                         <div className={`overflow-hidden rounded-xl mb-3 relative ${data.gridCols === 1 ? 'aspect-video' : 'aspect-square'}`}>
-                                            <img
+                                            <AppImage
                                                 src={item.image}
                                                 alt={item.name}
                                                 className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"

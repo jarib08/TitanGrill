@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowUpRight, ShoppingBag } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import SelectionModal from './SelectionModal';
+import AppImage from './ui/AppImage';
 
 // Data for Modals
 const bebidasData = {
@@ -102,7 +103,7 @@ const MenuGrid = () => {
                             className={`group relative bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden hover:border-fire/50 transition-all duration-500 ${cat.modalData ? 'cursor-pointer' : ''}`}
                         >
                             <div className="h-64 overflow-hidden relative">
-                                <img
+                                <AppImage
                                     src={cat.image}
                                     alt={cat.title}
                                     className="w-full h-full object-cover transform group-hover:scale-110 transition-transform duration-700 ease-in-out"

@@ -1,3 +1,4 @@
+export { default as AppImage } from './AppImage';
 // Barrel export — src/components/ui/index.js
 export { Badge }          from './Badge.jsx';
 export { EmptyState }     from './EmptyState.jsx';

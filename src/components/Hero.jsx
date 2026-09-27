@@ -2,6 +2,7 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import { ShoppingBag } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import AppImage from './ui/AppImage';
 
 const Hero = () => {
     const scrollToMenu = () => {
@@ -15,10 +16,12 @@ const Hero = () => {
         <section className="relative h-screen flex items-center justify-center overflow-hidden bg-black">
             {/* Background Image */}
             <div className="absolute inset-0 z-0">
-                <img
+                <AppImage
                     src="/menu/hero_Background_Image.jpg"
                     alt="Premium Grill"
                     className="w-full h-full object-cover opacity-60"
+                    loading="eager"
+                    fetchPriority="high"
                 />
                 {/* Gradients for text readability and luxury vibe */}
                 <div className="absolute inset-0 bg-[linear-gradient(to_top,var(--tw-gradient-stops))] from-black via-black/40 to-transparent"></div>
