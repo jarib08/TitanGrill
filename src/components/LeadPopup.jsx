@@ -152,57 +152,30 @@ const LeadPopup = () => {
             return;
         }
 
-        const payload = {
-            nombre: formData.name.trim(),
-            celular: formData.phone,
-            email: formData.email.trim() || null,
-            stamps_count: 0,
-            ...(referrerId && { referred_by: referrerId })
-        };
-
         try {
-            // Use maybeSingle() to avoid error when no results
-            const { data: existingUser, error: selectError } = await supabase
-                .from('clientes')
-                .select('*')
-                .eq('celular', formData.phone)
-                .maybeSingle();
+            // Antes: SELECT por celular -> si no existe INSERT -> si choca,
+            // reintentar el SELECT. Ese patron tenia una carrera real, y el
+            // reintento era codigo muerto: no hay indice unico sobre
+            // clientes.celular, asi que la unique_violation que esperaba nunca
+            // podia ocurrir. Dos registros simultaneos creaban DOS tarjetas.
+            //
+            // Ahora una sola RPC atomica, serializada por numero con un lock de
+            // transaccion. Ademas deja de requerir permiso SELECT publico sobre
+            // la tabla clientes, que era la fuga de datos personales.
+            const { data, error: rpcError } = await supabase.rpc('fn_registrar_cliente_publico', {
+                p_nombre: formData.name.trim(),
+                p_celular: formData.phone,
+                p_email: formData.email.trim() || null,
+                p_referred_by: referrerId || null
+            });
 
-            if (selectError) {
-                handleSupabaseError(selectError, 'checkExistingUser');
-                throw selectError;
+            if (rpcError) {
+                handleSupabaseError(rpcError, 'registrarClientePublico');
+                throw rpcError;
             }
+            if (!data?.success) throw new Error(data?.message || ERROR_MESSAGES.REGISTER_ERROR);
 
-            let client = existingUser;
-
-            if (!existingUser) {
-                const { data: newUser, error: insertError } = await supabase
-                    .from('clientes')
-                    .insert([payload])
-                    .select()
-                    .single();
-
-                if (insertError) {
-                    const errorInfo = handleSupabaseError(insertError, 'insertUser');
-                    // Handle race condition: if unique violation, try to fetch the user
-                    if (errorInfo?.isUniqueViolation) {
-                        const { data: retryUser } = await supabase
-                            .from('clientes')
-                            .select('*')
-                            .eq('celular', formData.phone)
-                            .maybeSingle();
-                        if (retryUser) {
-                            client = retryUser;
-                        } else {
-                            throw insertError;
-                        }
-                    } else {
-                        throw insertError;
-                    }
-                } else {
-                    client = newUser;
-                }
-            }
+            const client = data.cliente;
 
             setClientData(client);
             setToStorage(STORAGE_KEYS.CLIENT, client);

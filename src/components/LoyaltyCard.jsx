@@ -17,72 +17,79 @@ const LoyaltyCard = ({ client: initialClient }) => {
     const [isVerifying, setIsVerifying] = useState(true);
     const [showBigQr, setShowBigQr] = useState(false);
 
-    // Efecto para sincronizar con Realtime + Polling de respaldo en vivo (3s)
+    // Sincronizacion de sellos por polling de la RPC fn_cliente_por_id.
+    //
+    // QUE CAMBIO Y POR QUE
+    // Antes habia TRES mecanismos a la vez: una consulta directa a la tabla
+    // clientes, un polling cada 3 segundos con la misma consulta, y una
+    // suscripcion Realtime. Los tres requerian permiso SELECT publico sobre
+    // clientes, que era la fuga de datos: cualquiera con la anon key podia
+    // descargar los 27 clientes con nombre, celular y email.
+    //
+    // La suscripcion Realtime se elimino porque Realtime respeta el RLS: al
+    // cerrar el SELECT publico dejaria de entregar eventos en silencio, que es
+    // la peor forma de fallar. El polling ya cubria ese caso (existia
+    // justamente como respaldo "por si el WebSocket movil parpadea").
+    //
+    // El intervalo pasa de 3s a 5s y se PAUSA cuando la pestana no esta
+    // visible: antes, una tarjeta abierta en una pestana de fondo consultaba
+    // la base cada 3 segundos indefinidamente.
     useEffect(() => {
         if (!initialClient?.id) return;
 
-        // 1. Sincronizar el estado inicial (y forzar refresh desde DB para asegurar datos frescos)
-        const fetchLatestData = async () => {
-            setClient(initialClient);
+        let cancelado = false;
 
-            const { data, error } = await supabase
-                .from('clientes')
-                .select('*')
-                .eq('id', initialClient.id)
-                .maybeSingle();
+        const traer = async (esInicial) => {
+            // El setState va DENTRO de la funcion async, no en el cuerpo del
+            // efecto: llamarlo sincronicamente ahi dispara renders en cascada
+            // (regla react-hooks/set-state-in-effect).
+            if (esInicial) setClient(initialClient);
 
-            if (data && !error) {
-                setClient(data);
-                localStorage.setItem('titan_client', JSON.stringify(data));
-            }
-            setIsVerifying(false);
-        };
+            const { data, error } = await supabase.rpc('fn_cliente_por_id', { p_id: initialClient.id });
+            if (cancelado) return;
 
-        fetchLatestData();
-
-        // 2. Polling de respaldo cada 3 segundos por si el WebSocket móvil parpadea
-        const pollInterval = setInterval(async () => {
-            const { data, error } = await supabase
-                .from('clientes')
-                .select('*')
-                .eq('id', initialClient.id)
-                .maybeSingle();
-
-            if (data && !error) {
+            if (!error && data?.success && data.encontrado && data.cliente) {
                 setClient(prev => {
-                    if (prev?.stamps_count !== data.stamps_count) {
-                        localStorage.setItem('titan_client', JSON.stringify(data));
-                        return data;
+                    // Solo reescribe si algo cambio, para no re-renderizar de mas
+                    if (!esInicial && prev?.stamps_count === data.cliente.stamps_count) return prev;
+                    try {
+                        localStorage.setItem('titan_client', JSON.stringify(data.cliente));
+                    } catch {
+                        // Modo privado o almacenamiento lleno: la tarjeta sigue
+                        // funcionando, solo no se recuerda al recargar.
                     }
-                    return prev;
+                    return data.cliente;
                 });
             }
-        }, 3000);
+            if (esInicial) setIsVerifying(false);
+        };
 
-        // 3. Suscribirse a cambios Postgres Realtime en tiempo real para este cliente
-        const subscription = supabase
-            .channel(`client-${initialClient.id}`)
-            .on(
-                'postgres_changes',
-                {
-                    event: 'UPDATE',
-                    schema: 'public',
-                    table: 'clientes',
-                    filter: `id=eq.${initialClient.id}`
-                },
-                (payload) => {
-                    if (payload.new) {
-                        console.log('🔥 ¡Sello detectado en tiempo real!', payload.new);
-                        setClient(payload.new);
-                        localStorage.setItem('titan_client', JSON.stringify(payload.new));
-                    }
-                }
-            )
-            .subscribe();
+        traer(true);
+
+        let intervalo = null;
+        const arrancar = () => {
+            if (intervalo) return;
+            intervalo = setInterval(() => traer(false), 5000);
+        };
+        const detener = () => {
+            if (intervalo) { clearInterval(intervalo); intervalo = null; }
+        };
+        const alCambiarVisibilidad = () => {
+            if (document.hidden) {
+                detener();
+            } else {
+                traer(false);
+                arrancar();
+            }
+        };
+
+        if (!document.hidden) arrancar();
+        document.addEventListener('visibilitychange', alCambiarVisibilidad);
 
         return () => {
-            clearInterval(pollInterval);
-            subscription.unsubscribe();
+            cancelado = true;
+            detener();
+            document.removeEventListener('visibilitychange', alCambiarVisibilidad);
         };
     }, [initialClient]);
 

@@ -33,36 +33,21 @@ const JoinClubSection = () => {
         setError('');
 
         try {
-            // Check if user exists
-            const { data: existingUser } = await supabase
-                .from('clientes')
-                .select('*')
-                .eq('celular', formData.phone)
-                .maybeSingle();
+            // Una sola RPC atomica: si el celular ya tiene tarjeta la devuelve,
+            // si no la crea. Reemplaza el consultar-e-insertar que podia
+            // duplicar tarjetas, y ya no necesita SELECT publico sobre clientes.
+            const { data, error: rpcError } = await supabase.rpc('fn_registrar_cliente_publico', {
+                p_nombre: formData.name.trim(),
+                p_celular: formData.phone,
+                p_email: formData.email.trim() || null,
+                p_referred_by: null
+            });
 
-            if (existingUser) {
-                setClientData(existingUser);
-                setToStorage(STORAGE_KEYS.CLIENT, existingUser);
-                setSuccess(true);
-                return;
-            }
+            if (rpcError) throw rpcError;
+            if (!data?.success) throw new Error(data?.message || 'No se pudo completar el registro.');
 
-            // Create new user
-            const { data: newUser, error: insertError } = await supabase
-                .from('clientes')
-                .insert([{
-                    nombre: formData.name.trim(),
-                    celular: formData.phone,
-                    email: formData.email.trim() || null,
-                    stamps_count: 0
-                }])
-                .select()
-                .single();
-
-            if (insertError) throw insertError;
-
-            setClientData(newUser);
-            setToStorage(STORAGE_KEYS.CLIENT, newUser);
+            setClientData(data.cliente);
+            setToStorage(STORAGE_KEYS.CLIENT, data.cliente);
             setSuccess(true);
         } catch (err) {
             console.error("Error joining club:", err);

@@ -557,25 +557,33 @@ const POS = () => {
         setNewClientError('');
 
         try {
-            const referralCode = 'TITAN-' + Math.random().toString(36).substring(2, 7).toUpperCase();
-            const { data: newClient, error } = await supabase
-                .from('clientes')
-                .insert([{
-                    nombre: newClientForm.nombre.trim(),
-                    celular: newClientForm.celular.trim(),
-                    email: newClientForm.email.trim() || null,
-                    referral_code: referralCode,
-                    stamps_count: 0
-                }])
-                .select()
-                .single();
+            // Antes se insertaba directo generando el codigo con
+            // Math.random().toString(36) -> 5 caracteres, propenso a colision y
+            // sin verificacion de unicidad. Ahora lo hace la RPC, que usa el
+            // trigger set_referral_code de la base: 8 caracteres sin caracteres
+            // ambiguos y con verificacion de unicidad.
+            //
+            // Ademas es idempotente por celular: si el numero ya tiene tarjeta
+            // la devuelve en vez de crear una segunda.
+            const { data, error } = await supabase.rpc('fn_registrar_cliente_publico', {
+                p_nombre: newClientForm.nombre.trim(),
+                p_celular: newClientForm.celular.trim(),
+                p_email: newClientForm.email.trim() || null,
+                p_referred_by: null
+            });
 
             if (error) throw error;
+            if (!data?.success) throw new Error(data?.message || 'No se pudo registrar el cliente.');
 
+            const newClient = data.cliente;
             setSelectedClient(newClient);
             setShowNewClientModal(false);
             setNewClientForm({ nombre: '', celular: '', email: '' });
-            setSuccessMessage(`🔥 ¡Nuevo cliente registrado y asociado: ${newClient.nombre}!`);
+            setSuccessMessage(
+                data.creado
+                    ? `🔥 ¡Nuevo cliente registrado y asociado: ${newClient.nombre}!`
+                    : `Este celular ya tenía tarjeta. Cliente asociado: ${newClient.nombre}`
+            );
         } catch (err) {
             console.error('Error registering new client:', err);
             setNewClientError(err.message || 'Error al registrar el nuevo cliente.');
