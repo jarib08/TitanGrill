@@ -126,7 +126,9 @@ const AdminDashboard = () => {
     const [insumoSaving, setInsumoSaving] = useState(false);
     const [recetaSaving, setRecetaSaving] = useState(false);
     const [showAjusteModal, setShowAjusteModal] = useState(null); // insumo object
-    const [ajusteForm, setAjusteForm] = useState({ tipo: 'AJUSTE', cantidad: 0, motivo: '' });
+    // tipo es el valor de la UI: ENTRADA | AJUSTE_MAS | AJUSTE_MENOS | MERMA.
+    // Se traduce a (tipo, signo) al enviar, porque la RPC recibe un delta con signo.
+    const [ajusteForm, setAjusteForm] = useState({ tipo: 'AJUSTE_MAS', cantidad: 0, motivo: '', idemKey: null });
     const [showCargaMasivaModal, setShowCargaMasivaModal] = useState(false);
     const [cargaMasivaForm, setCargaMasivaForm] = useState({});
     const [cargaMasivaMotivo, setCargaMasivaMotivo] = useState('Toma Física / Carga de Stock Inicial');
@@ -1390,10 +1392,16 @@ const AdminDashboard = () => {
         }
         setInsumoSaving(true);
         try {
-            const payload = {
+            // stock_actual va SOLO al crear. Antes tambien iba en el UPDATE, asi
+            // que editar el nombre o el costo de un insumo sobrescribia su stock
+            // con el valor que tuviera cargado el formulario, SIN dejar ningun
+            // registro en movimientos_inventario. Era el peor de los dos caminos
+            // de escritura directa: cero trazabilidad.
+            // Para cambiar el stock existe el modal de movimiento, que pasa por
+            // la RPC atomica ajustar_stock_insumo.
+            const base = {
                 nombre: insumoForm.nombre,
                 unidad_medida: insumoForm.unidad_medida,
-                stock_actual: Number(insumoForm.stock_actual) || 0,
                 stock_minimo: Number(insumoForm.stock_minimo) || 0,
                 costo_unitario: Number(insumoForm.costo_unitario) || 0,
                 activo: insumoForm.activo,
@@ -1402,9 +1410,12 @@ const AdminDashboard = () => {
 
             let error;
             if (editingInsumo === 'new') {
-                ({ error } = await supabase.from('insumos').insert([payload]));
+                ({ error } = await supabase.from('insumos').insert([{
+                    ...base,
+                    stock_actual: Number(insumoForm.stock_actual) || 0
+                }]));
             } else {
-                ({ error } = await supabase.from('insumos').update(payload).eq('id', editingInsumo));
+                ({ error } = await supabase.from('insumos').update(base).eq('id', editingInsumo));
             }
 
             if (error) throw error;
@@ -1433,46 +1444,54 @@ const AdminDashboard = () => {
         }
     };
 
+    // Traduce la opcion de la UI al par (tipo, signo) que espera la RPC.
+    // La RPC recibe un DELTA CON SIGNO y valida la coherencia: una ENTRADA no
+    // puede ser negativa y una MERMA no puede aumentar el stock.
+    const MOVIMIENTO_UI = {
+        ENTRADA:      { tipo: 'ENTRADA', signo:  1, etiqueta: 'Entrada (Compra / Carga)' },
+        AJUSTE_MAS:   { tipo: 'AJUSTE',  signo:  1, etiqueta: 'Ajuste (Corrección +)' },
+        AJUSTE_MENOS: { tipo: 'AJUSTE',  signo: -1, etiqueta: 'Ajuste (Corrección −)' },
+        MERMA:        { tipo: 'MERMA',   signo: -1, etiqueta: 'Merma (Desecho / Pérdida −)' },
+    };
+
     const handleAjustarStock = async () => {
-        if (!showAjusteModal || !ajusteForm.cantidad) {
+        if (!showAjusteModal || !Number(ajusteForm.cantidad)) {
             alert('Ingrese una cantidad válida.');
             return;
         }
+        const mov = MOVIMIENTO_UI[ajusteForm.tipo] || MOVIMIENTO_UI.AJUSTE_MAS;
+
         setInsumoSaving(true);
         try {
-            const insumo = showAjusteModal;
-            const delta = Number(ajusteForm.cantidad);
+            // Antes esto hacia DOS viajes: UPDATE insumos y luego INSERT del
+            // movimiento. Si el segundo fallaba, el stock cambiaba SIN RASTRO.
+            // Y calculaba el stock absoluto desde el valor cacheado en el
+            // navegador, asi que una venta del POS ocurrida en el medio se
+            // PISABA. Demostrado en pruebas: con stock 2656, una venta de 5 y
+            // un ajuste de +10, el codigo viejo escribia 2666 en vez de 2661,
+            // creando 5 unidades fantasma.
+            //
+            // Ahora una sola RPC atomica que bloquea la fila y aplica un DELTA
+            // sobre el valor real de la base. La clave de idempotencia protege
+            // del doble clic.
+            const { data, error } = await supabase.rpc('ajustar_stock_insumo', {
+                p_insumo_id: showAjusteModal.id,
+                p_tipo: mov.tipo,
+                p_cantidad: Number(ajusteForm.cantidad) * mov.signo,
+                p_motivo: ajusteForm.motivo || null,
+                p_idempotency_key: ajusteForm.idemKey || crypto.randomUUID()
+            });
 
-            // Adjust calculation based on type
-            const sign = (ajusteForm.tipo === 'ENTRADA' || ajusteForm.tipo === 'AJUSTE') ? 1 : -1;
-            const finalDelta = delta * sign;
-            const newStock = Math.max(0, Number(insumo.stock_actual) + finalDelta);
+            if (error) throw error;
+            if (!data?.success) throw new Error(data?.message || 'No se pudo ajustar el inventario.');
 
-            // 1. Update stock in insumos table
-            const { error: insErr } = await supabase
-                .from('insumos')
-                .update({ stock_actual: newStock, updated_at: new Date().toISOString() })
-                .eq('id', insumo.id);
-            if (insErr) throw insErr;
-
-            // 2. Insert trace row to movimientos_inventario
-            const { error: trcErr } = await supabase
-                .from('movimientos_inventario')
-                .insert([{
-                    insumo_id: insumo.id,
-                    tipo: ajusteForm.tipo,
-                    cantidad: finalDelta,
-                    motivo: ajusteForm.motivo || 'Ajuste manual del socio',
-                    usuario_id: currentUserProfile?.id
-                }]);
-            if (trcErr) throw trcErr;
-
+            alert(data.message);
             setShowAjusteModal(null);
-            setAjusteForm({ tipo: 'AJUSTE', cantidad: 0, motivo: '' });
+            setAjusteForm({ tipo: 'AJUSTE_MAS', cantidad: 0, motivo: '', idemKey: crypto.randomUUID() });
             await fetchInventario();
         } catch (err) {
             console.error(err);
-            alert('Error al ajustar el inventario.');
+            alert('Error al ajustar el inventario: ' + err.message);
         } finally {
             setInsumoSaving(false);
         }
@@ -5705,6 +5724,12 @@ const AdminDashboard = () => {
                                                 value={insumoForm.stock_actual}
                                                 onChange={val => setInsumoForm(p => ({ ...p, stock_actual: val }))}
                                             />
+                                            {editingInsumo !== 'new' && (
+                                                <p className="text-[9px] text-zinc-600 mt-1 leading-snug">
+                                                    El stock no se edita aquí. Use el botón de movimiento del insumo: así queda
+                                                    registrado en el historial y no se pisa una venta del POS.
+                                                </p>
+                                            )}
                                         </div>
                                         <div>
                                             <label className="text-[10px] uppercase tracking-wider font-bold text-zinc-400 block mb-1">Alerta Stock Mínimo</label>
@@ -5878,7 +5903,7 @@ const AdminDashboard = () => {
                                                         {/* Ajuste/Entrada — solo socio */}
                                                         {currentUserProfile?.es_socio && (
                                                             <button
-                                                                onClick={() => { setShowAjusteModal(ins); setAjusteForm({ tipo: 'AJUSTE', cantidad: 0, motivo: '' }); }}
+                                                                onClick={() => { setShowAjusteModal(ins); setAjusteForm({ tipo: 'AJUSTE_MAS', cantidad: 0, motivo: '', idemKey: crypto.randomUUID() }); }}
                                                                 className="h-9 px-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-xl text-xs font-bold transition-colors"
                                                             >
                                                                 + Stock
@@ -6454,7 +6479,7 @@ const AdminDashboard = () => {
                                 </button>
                                 {currentUserProfile?.es_socio && (
                                     <button
-                                        onClick={() => { setShowInsumoDetalle(null); setShowAjusteModal(ins); setAjusteForm({ tipo: 'AJUSTE', cantidad: 0, motivo: '' }); }}
+                                        onClick={() => { setShowInsumoDetalle(null); setShowAjusteModal(ins); setAjusteForm({ tipo: 'AJUSTE_MAS', cantidad: 0, motivo: '', idemKey: crypto.randomUUID() }); }}
                                         className="flex-1 h-11 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-xl text-sm font-bold transition-colors"
                                     >
                                         + Stock
@@ -6469,9 +6494,13 @@ const AdminDashboard = () => {
                 {showAjusteModal && (() => {
                     const ins = showAjusteModal;
                     const delta = Number(ajusteForm.cantidad);
-                    const isNegative = ajusteForm.tipo === 'MERMA';
-                    const sign = isNegative ? -1 : 1;
-                    const nuevoStock = delta > 0 ? Math.max(0, Number(ins.stock_actual) + sign * delta) : null;
+                    const mov = MOVIMIENTO_UI[ajusteForm.tipo] || MOVIMIENTO_UI.AJUSTE_MAS;
+                    const isNegative = mov.signo < 0;
+                    // Sin Math.max(0, ...): la vista previa muestra el resultado REAL,
+                    // incluso si es negativo, para que se vea que el movimiento seria
+                    // rechazado. Antes el clamp a 0 ocultaba el descuadre.
+                    const nuevoStock = delta > 0 ? Number(ins.stock_actual) + mov.signo * delta : null;
+                    const quedariaNegativo = nuevoStock !== null && nuevoStock < 0;
                     return (
                         <div className="fixed inset-0 bg-black/80 flex items-end sm:items-center justify-center p-0 sm:p-6 z-[999]">
                             <div className="w-full sm:max-w-sm bg-zinc-900 border border-zinc-800 rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl space-y-5">
@@ -6495,7 +6524,8 @@ const AdminDashboard = () => {
                                         onChange={e => setAjusteForm(p => ({ ...p, tipo: e.target.value }))}
                                     >
                                         <option value="ENTRADA">Entrada (Compra / Carga)</option>
-                                        <option value="AJUSTE">Ajuste (Corrección +)</option>
+                                        <option value="AJUSTE_MAS">Ajuste (Corrección +)</option>
+                                        <option value="AJUSTE_MENOS">Ajuste (Corrección −)</option>
                                         <option value="MERMA">Merma (Desecho / Pérdida −)</option>
                                     </select>
                                 </div>
@@ -6519,14 +6549,22 @@ const AdminDashboard = () => {
                                             <span>{ins.stock_actual} {ins.unidad_medida}</span>
                                         </div>
                                         <div className={`flex justify-between ${isNegative ? 'text-red-400' : 'text-blue-400'}`}>
-                                            <span>{ajusteForm.tipo}</span>
+                                            <span>{mov.tipo}</span>
                                             <span>{isNegative ? '−' : '+'} {delta} {ins.unidad_medida}</span>
                                         </div>
                                         <div className="border-t border-zinc-800 my-1" />
                                         <div className="flex justify-between text-white font-bold">
                                             <span>Nuevo stock</span>
-                                            <span className={nuevoStock === 0 ? 'text-red-400' : 'text-green-400'}>{nuevoStock} {ins.unidad_medida}</span>
+                                            <span className={quedariaNegativo ? 'text-red-400' : nuevoStock === 0 ? 'text-yellow-400' : 'text-green-400'}>
+                                                {nuevoStock} {ins.unidad_medida}
+                                            </span>
                                         </div>
+                                        {quedariaNegativo && (
+                                            <p className="text-[10px] text-red-400 font-sans pt-1 border-t border-red-900/40 mt-1">
+                                                El stock no puede quedar negativo: este movimiento será rechazado.
+                                                Revise la cantidad o el conteo físico.
+                                            </p>
+                                        )}
                                     </div>
                                 )}
                                 {/* Motivo */}
