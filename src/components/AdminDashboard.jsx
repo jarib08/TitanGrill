@@ -838,7 +838,19 @@ const AdminDashboard = () => {
     const handleSaldoInicial = async () => {
         setActionLoading(true);
         try {
+            const openSessions = sessionsList.filter(s => s.estado === 'ABIERTA');
+            if (openSessions.length === 0) {
+                alert('⚠️ No hay ninguna sesión de caja ABIERTA en este momento. Se requiere abrir la caja en el POS antes de registrar el saldo inicial.');
+                return;
+            }
+            const targetSesionId = saldoInicialForm.sesion_id || (openSessions.length === 1 ? openSessions[0].id : null);
+            if (!targetSesionId) {
+                alert('Debe seleccionar la sesión de caja abierta correspondiente.');
+                return;
+            }
+
             const { data, error } = await supabase.rpc('registrar_saldo_inicial', {
+                p_sesion_id: targetSesionId,
                 p_efectivo: Number(saldoInicialForm.efectivo),
                 p_nequi: Number(saldoInicialForm.nequi),
                 p_bancolombia: Number(saldoInicialForm.bancolombia)
@@ -3135,8 +3147,10 @@ const AdminDashboard = () => {
                                                                 </span>
                                                             </td>
                                                             <td className="p-3 text-right font-mono">
-                                                                {sesion.diferencia !== undefined && sesion.estado === 'CERRADA'
-                                                                    ? <span className={Number(sesion.diferencia) > 0 ? 'text-red-400' : Number(sesion.diferencia) < 0 ? 'text-green-400' : 'text-zinc-400'}>${Number(sesion.diferencia || 0).toLocaleString()}</span>
+                                                                {sesion.estado === 'CERRADA'
+                                                                    ? sesion.diferencia != null
+                                                                        ? <span className={Number(sesion.diferencia) > 0 ? 'text-red-400' : Number(sesion.diferencia) < 0 ? 'text-green-400' : 'text-zinc-400'}>${Number(sesion.diferencia).toLocaleString()}</span>
+                                                                        : <span className="text-zinc-500 italic text-[9px]">Sin arqueo</span>
                                                                     : <span className="text-zinc-600">—</span>
                                                                 }
                                                             </td>
