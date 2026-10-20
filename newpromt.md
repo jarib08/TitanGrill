@@ -1,106 +1,119 @@
-## TRANSFERENCIA GIT — TITAN GRILL
+# FASE 50B — REVISIÓN PREVIA A PUBLICACIÓN DE LA RAMA DE CONTINUIDAD
 
-Objetivo: preparar y subir una rama independiente para entregar Titan Grill a otro programador/Claude.
+## Objetivo
 
-### 1. PRECHECK — SOLO LECTURA
+Revisar el resultado de la FASE 50A y preparar una lista exacta, segura y reproducible de los archivos que se publicarán en GitHub para que otro desarrollador pueda continuar Titan Grill.
 
-Ejecuta:
+Repositorio: `E:\Documents\titan_grill`
 
-* `git status`
-* `git branch -vv`
-* `git diff --stat`
-* `git diff -- newpromt.md src/components/AdminDashboard.jsx src/components/POS.jsx`
-* `git ls-files '*.md'`
+Rama de trabajo esperada: `audit/titan-grill-forensic-handoff`
 
-Revisa qué cambios son parte de la auditoría/remediación D2.1-D2.3 y cuáles son preexistentes.
+HEAD histórico de referencia: `ec72b28ff6178a788e4aa0c9f53aa1db82b5c0f7`
 
-NO descartes, sobrescribas ni hagas reset de ningún cambio.
+Rama propuesta: `handoff/titan-grill-continuidad-tecnica`
 
-### 2. CREAR RAMA
+Documento de continuidad: `TRASPASO_TECNICO_TITAN_GRILL.md`
 
-Desde el estado actual crea:
+## A. Restricciones obligatorias
 
-`audit/titan-grill-forensic-handoff`
+1. Realizar únicamente inspección de solo lectura.
+2. No ejecutar `git checkout`, `git switch`, `git branch` para crear ramas, `git add`, `git commit`, `git push`, `git pull`, `git reset`, `git clean`, `git restore` ni `git stash`.
+3. No modificar, sobrescribir, mover ni eliminar ningún archivo.
+4. No modificar `newpromt.md`: es un archivo editable intencional del propietario.
+5. No ejecutar SQL, migraciones, RPC, pruebas que modifiquen datos ni operaciones remotas.
+6. No ejecutar scripts que puedan conectarse a producción.
+7. No mostrar secretos, tokens, contraseñas, claves privadas ni valores sensibles.
+8. No asumir que el estado de Git, el contenido de los archivos o la rama actual coincide con informes históricos: verificarlo localmente.
+9. Detenerse si la revisión exige una operación no permitida.
 
-Cambia a esa rama.
+## B. Verificar el estado actual
 
-### 3. PREPARAR ENTREGA
+Ejecutar y registrar, sin alterar el repositorio:
 
-La rama debe contener:
+- `git branch --show-current`
+- `git rev-parse HEAD`
+- `git status --short`
+- `git diff --stat`
+- `git diff -- newpromt.md`
+- `git ls-files`
+- `git remote -v`, mostrando únicamente el nombre del remoto y su host; no divulgar credenciales embebidas en URL.
+- Comprobar si existe `TRASPASO_TECNICO_TITAN_GRILL.md` y registrar su tamaño.
+- Comprobar si ya existe la rama local propuesta, sin crearla.
 
-* código actual necesario;
-* migraciones realizadas;
-* `CONTEXTO_GLOBAL_TITAN_GRILL.md`;
-* `FASE_D2_1_IMPLEMENTACION_SCHEMA_MIGRACIONES.md`;
-* `FASE_D2_2_IMPLEMENTACION_RPC_IDEMPOTENCIA_SNAPSHOT.md`;
-* `FASE_D2_3_COMPRAS_TRAZABILIDAD_AJUSTES.md`;
-* demás `.md` que sean evidencia directa de esta auditoría.
+No afirmar que el árbol está limpio si hay modificaciones o archivos sin seguimiento.
 
-NO incluir:
+## C. Revisar el documento de continuidad
 
-* secretos;
-* `.env`;
-* credenciales;
-* archivos temporales;
-* builds;
-* `node_modules`.
+Leer `TRASPASO_TECNICO_TITAN_GRILL.md` y comprobar:
 
-Si `AdminDashboard.jsx`, `POS.jsx` o `newpromt.md` contienen cambios preexistentes, NO eliminarlos. Determina si forman parte del estado funcional actual que debe recibir el nuevo programador y documenta cualquier ambigüedad.
+- Que diferencie código confirmado, pruebas reproducibles, documentación histórica, inferencias y asuntos no demostrados.
+- Que las 20/20 pruebas se describan con el alcance real que pueda verificarse.
+- Que no se afirme que I1.4 está aplicada en producción sin evidencia directa.
+- Que las tres decisiones de negocio aparezcan como decisiones aprobadas y no como código ya implementado.
+- Que no se presente una conclusión de auditoría histórica como prueba del estado actual.
+- Que los defectos financieros estén vinculados a evidencia verificable.
+- Que se distinga la creación de una rama local de su publicación en GitHub.
+- Que las instrucciones para el siguiente desarrollador no autoricen implícitamente operaciones destructivas o remotas.
 
-### 4. COMMIT
+No modificar el documento. Si se detectan problemas, describir los cambios propuestos por separado.
 
-Antes del commit muestra:
+## D. Auditoría de seguridad de publicación
 
-* `git status`
-* `git diff --cached --stat`
-* `git diff --cached --name-status`
+Revisar los archivos candidatos y sus contenidos sin divulgar datos sensibles.
 
-Luego crea UN commit descriptivo:
+Clasificar cada archivo o grupo en:
 
-`chore: prepare forensic audit handoff`
+- INCLUIR PROPUESTO
+- EXCLUIR
+- REVISIÓN HUMANA OBLIGATORIA
 
-NO hagas otros commits.
+Prestar especial atención a:
 
-### 5. PUSH
+- `newpromt.md`, que debe conservarse y puede proponerse para inclusión.
+- `TRASPASO_TECNICO_TITAN_GRILL.md`.
+- `opencode.json`.
+- `.env` y archivos de configuración.
+- `scratch/` y scripts ejecutables.
+- `test_results.json` y los identificadores de la base local.
+- Migraciones I1.1, I1.2 e I1.3.
+- Migración I1.4 y migraciones versionadas existentes.
+- Informes históricos de FASE10 a FASE39.
+- Archivos que incluyan datos personales, credenciales, información de producción o instrucciones operativas sensibles.
 
-Sube únicamente:
+No publicar ni preparar archivos automáticamente. La presencia de un archivo en Git no demuestra que sea seguro divulgarlo.
 
-`audit/titan-grill-forensic-handoff`
+## E. Analizar la estrategia de rama
 
-a `origin`.
+Preparar una propuesta que:
 
-NO hagas push a `main`.
+1. Preserve intacta la rama de auditoría.
+2. Identifique el HEAD real desde el que se propone crear la rama.
+3. Explique qué cambios locales no se incluirían automáticamente al crearla desde el commit base.
+4. Enumere los archivos que se incorporarían expresamente mediante un futuro commit autorizado.
+5. No incluya cambios de código financiero ni borradores SQL no aprobados.
+6. Mantenga `newpromt.md` sin modificar.
+7. Distinga claramente entre rama local, commit local y publicación remota.
 
-### 6. VERIFICACIÓN FINAL
+No ejecutar ninguna operación Git de escritura.
 
-Ejecuta:
+## F. Informe final obligatorio
 
-`git status`
-`git branch -vv`
-`git log -1 --oneline`
-`git ls-tree -r --name-only HEAD`
+Generar el informe en la respuesta, sin crear ni modificar archivos, con estas secciones:
 
-Confirma:
+1. Estado real de Git.
+2. Validación del documento de continuidad.
+3. Matriz de archivos: incluir, excluir o revisión humana.
+4. Riesgos de seguridad detectados, sin revelar secretos.
+5. Lista exacta de archivos candidatos al primer commit.
+6. Archivos que requieren autorización adicional.
+7. Comandos propuestos para la siguiente fase, claramente etiquetados como NO EJECUTADOS.
+8. Limitaciones de la inspección y cuestiones no demostradas.
+9. Recomendación final para publicar la rama.
 
-* rama actual;
-* commit creado;
-* push exitoso;
-* rama remota;
-* archivos incluidos;
-* que `main` no fue modificado.
+Si no es posible comprobar un dato, indicarlo expresamente.
 
-NO modificar Supabase.
-NO ejecutar migraciones.
-NO hacer cambios funcionales.
-STOP.
+## Criterio de cierre
 
-ENTREGA FINAL:
-Indica exactamente:
+La FASE 50B termina con el informe y espera revisión humana.
 
-Rama:
-Commit:
-Remote:
-Push:
-Estado:
-Archivos relevantes incluidos:
-Archivos deliberadamente excluidos:
+No crear ramas, no preparar el índice, no generar commits y no publicar en GitHub. La siguiente fase requerirá autorización explícita del propietario.
