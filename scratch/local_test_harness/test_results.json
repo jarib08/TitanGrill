@@ -1,0 +1,162 @@
+[
+  {
+    "id": 1,
+    "name": "EFECTIVO con sesión propia abierta",
+    "status": "PASÓ",
+    "assertion": "Estado=RECIBIDA, egreso vinculado a sesión S1, stock=12, inv=1.",
+    "evidence": "{\"res\":{\"success\":true,\"recovered\":false,\"message\":\"Compra recibida, inventario alimentado y egreso financiero registrado\",\"movimiento_caja_id\":\"803b7c13-1c6d-4681-8935-d5cf48b03726\",\"total\":30000,\"metodo_pago\":\"EFECTIVO\",\"sesion_id\":\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\"},\"db\":{\"estado\":\"RECIBIDA\",\"caja_cnt\":1,\"caja_ses\":\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\",\"stock\":12,\"inv_cnt\":1}}",
+    "error": null
+  },
+  {
+    "id": 2,
+    "name": "EFECTIVO sin sesión abierta",
+    "status": "PASÓ",
+    "assertion": "Rechazo controlado; BORRADOR, 0 caja, stock=10.",
+    "evidence": "{\"res\":{\"success\":false,\"message\":\"Para compras pagadas en EFECTIVO se requiere una sesión de caja abierta del trabajador autenticado\"},\"db\":{\"estado\":\"BORRADOR\",\"caja_cnt\":0,\"stock\":10}}",
+    "error": null
+  },
+  {
+    "id": 3,
+    "name": "NEQUI sin sesión (Tesorería)",
+    "status": "PASÓ",
+    "assertion": "sesion_id=NULL, estado=RECIBIDA, stock Papas=23.",
+    "evidence": "{\"res\":{\"success\":true,\"recovered\":false,\"message\":\"Compra recibida, inventario alimentado y egreso financiero registrado\",\"movimiento_caja_id\":\"8c2df0e9-e7c8-4037-a38e-f64a930a77cf\",\"total\":9000,\"metodo_pago\":\"NEQUI\",\"sesion_id\":null},\"db\":{\"estado\":\"RECIBIDA\",\"sesion\":null,\"stock\":23}}",
+    "error": null
+  },
+  {
+    "id": 4,
+    "name": "BANCOLOMBIA sin sesión (Tesorería)",
+    "status": "PASÓ",
+    "assertion": "sesion_id=NULL, metodo=BANCOLOMBIA, stock Queso=7.",
+    "evidence": "{\"res\":{\"success\":true,\"recovered\":false,\"message\":\"Compra recibida, inventario alimentado y egreso financiero registrado\",\"movimiento_caja_id\":\"27e0116d-1305-4e58-b92e-c8e865d53be6\",\"total\":16000,\"metodo_pago\":\"BANCOLOMBIA\",\"sesion_id\":null},\"db\":{\"estado\":\"RECIBIDA\",\"sesion\":null,\"metodo\":\"BANCOLOMBIA\",\"stock\":7}}",
+    "error": null
+  },
+  {
+    "id": 5,
+    "name": "BANCOLOMBIA con sesión abierta",
+    "status": "PASÓ",
+    "assertion": "sesion_id vinculado a S1. Efecto contable de caja de turno documentado.",
+    "evidence": "{\"res\":{\"success\":true,\"recovered\":false,\"message\":\"Compra recibida, inventario alimentado y egreso financiero registrado\",\"movimiento_caja_id\":\"571aa7bb-8972-4df9-8f25-cc965b2fa8a4\",\"total\":15000,\"metodo_pago\":\"BANCOLOMBIA\",\"sesion_id\":\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\"},\"db\":{\"sesion\":\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\"}}",
+    "error": null
+  },
+  {
+    "id": 6,
+    "name": "Método de pago NULL (corrección 3VL)",
+    "status": "PASÓ",
+    "assertion": "NULL interceptado por guarda IS NULL; success:false sin mutaciones.",
+    "evidence": "{\"res\":{\"success\":false,\"message\":\"Método de pago inválido. Use: EFECTIVO, NEQUI o BANCOLOMBIA\"},\"db\":{\"estado\":\"BORRADOR\",\"caja_cnt\":0}}",
+    "error": null
+  },
+  {
+    "id": 7,
+    "name": "Método inválido (TARJETA)",
+    "status": "PASÓ",
+    "assertion": "Rechazo controlado de método fuera del dominio.",
+    "evidence": "{\"res\":{\"success\":false,\"message\":\"Método de pago inválido. Use: EFECTIVO, NEQUI o BANCOLOMBIA\"},\"db\":{\"estado\":\"BORRADOR\",\"caja_cnt\":0}}",
+    "error": null
+  },
+  {
+    "id": 8,
+    "name": "Compra inexistente",
+    "status": "PASÓ",
+    "assertion": "success:false, message=\"Compra no encontrada\".",
+    "evidence": "{\"res\":{\"success\":false,\"message\":\"Compra no encontrada\"}}",
+    "error": null
+  },
+  {
+    "id": 9,
+    "name": "Idempotencia: misma clave repetida",
+    "status": "PASÓ",
+    "assertion": "recovered:true, 0 duplicados en caja/inventario, stock=11.",
+    "evidence": "{\"res\":{\"success\":true,\"recovered\":true,\"message\":\"La compra ya fue recibida exitosamente (Recuperado)\",\"total\":15000,\"metodo_pago\":\"EFECTIVO\"},\"db\":{\"caja_cnt\":1,\"stock\":11}}",
+    "error": null
+  },
+  {
+    "id": 10,
+    "name": "Idempotencia: clave diferente en compra recibida",
+    "status": "PASÓ",
+    "assertion": "Rechazo controlado con clave distinta.",
+    "evidence": "{\"res\":{\"success\":false,\"message\":\"La compra ya ha sido procesada o recibida anteriormente\"}}",
+    "error": null
+  },
+  {
+    "id": 11,
+    "name": "Idempotencia: clave nula en compra recibida",
+    "status": "PASÓ",
+    "assertion": "Rechazo controlado con key=NULL en segunda llamada.",
+    "evidence": "{\"res\":{\"success\":false,\"message\":\"La compra ya ha sido procesada o recibida anteriormente\"}}",
+    "error": null
+  },
+  {
+    "id": 12,
+    "name": "Colisión UNIQUE en clave de idempotencia",
+    "status": "PASÓ",
+    "assertion": "PostgreSQL aborta la TX con duplicate key; C12B permanece BORRADOR.",
+    "evidence": "{\"threw\":true,\"db\":{\"estado_b\":\"BORRADOR\",\"caja_b\":0}}",
+    "error": null
+  },
+  {
+    "id": 13,
+    "name": "Concurrencia real simultánea (FOR UPDATE)",
+    "status": "PASÓ",
+    "assertion": "1 procesó + 1 recuperó; cero duplicados en caja e inventario.",
+    "evidence": "{\"r1\":{\"success\":true,\"recovered\":true,\"message\":\"La compra ya fue recibida exitosamente (Recuperado)\",\"total\":15000,\"metodo_pago\":\"EFECTIVO\"},\"r2\":{\"success\":true,\"recovered\":false,\"message\":\"Compra recibida, inventario alimentado y egreso financiero registrado\",\"movimiento_caja_id\":\"67288934-aac8-449c-9ef8-78ca547614c8\",\"total\":15000,\"metodo_pago\":\"EFECTIVO\",\"sesion_id\":\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\"},\"db\":{\"caja_cnt\":1,\"stock\":11}}",
+    "error": null
+  },
+  {
+    "id": 14,
+    "name": "Atomicidad y Rollback completo",
+    "status": "PASÓ",
+    "assertion": "Excepción en inventario generó rollback total; compra=BORRADOR, caja=0, stock=10.",
+    "evidence": "{\"threw\":true,\"db\":{\"estado\":\"BORRADOR\",\"caja_cnt\":0,\"stock\":10}}",
+    "error": null
+  },
+  {
+    "id": 15,
+    "name": "Compra Multilínea (3 insumos)",
+    "status": "PASÓ",
+    "assertion": "Total=$53.000, 3 entradas inventario, stocks: Carne=12, Papas=25, Queso=6.",
+    "evidence": "{\"res\":{\"success\":true,\"recovered\":false,\"message\":\"Compra recibida, inventario alimentado y egreso financiero registrado\",\"movimiento_caja_id\":\"24831688-2659-400e-93eb-a3b5843a1447\",\"total\":53000,\"metodo_pago\":\"EFECTIVO\",\"sesion_id\":\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\"},\"db\":{\"total\":53000,\"caja_monto\":53000,\"s1\":12,\"s2\":25,\"s3\":6,\"inv_cnt\":3}}",
+    "error": null
+  },
+  {
+    "id": 16,
+    "name": "Prevención de duplicación en inventario",
+    "status": "PASÓ",
+    "assertion": "Múltiples reintentos: exactamente 1 caja + 1 inventario, stock=11.",
+    "evidence": "{\"db\":{\"caja_cnt\":1,\"inv_cnt\":1,\"stock\":11}}",
+    "error": null
+  },
+  {
+    "id": 17,
+    "name": "Resolución de firmas RPC (1, 2 y 3 parámetros)",
+    "status": "PASÓ",
+    "assertion": "Las 3 firmas resuelven a la única función con DEFAULTs correctos.",
+    "evidence": "{\"r1\":{\"success\":true,\"recovered\":false,\"message\":\"Compra recibida, inventario alimentado y egreso financiero registrado\",\"movimiento_caja_id\":\"1bdc658d-47ad-4f0d-b629-26cb2511e924\",\"total\":15000,\"metodo_pago\":\"EFECTIVO\",\"sesion_id\":\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\"},\"r2\":{\"success\":true,\"recovered\":false,\"message\":\"Compra recibida, inventario alimentado y egreso financiero registrado\",\"movimiento_caja_id\":\"29569d9a-b57e-4fbb-82e8-e0e9cf10359e\",\"total\":9000,\"metodo_pago\":\"NEQUI\",\"sesion_id\":null},\"r3\":{\"success\":true,\"recovered\":false,\"message\":\"Compra recibida, inventario alimentado y egreso financiero registrado\",\"movimiento_caja_id\":\"fc59b087-07f0-4ac7-b3b1-623fed795748\",\"total\":8000,\"metodo_pago\":\"BANCOLOMBIA\",\"sesion_id\":null}}",
+    "error": null
+  },
+  {
+    "id": 18,
+    "name": "Aislamiento de sesión (no toma caja ajena)",
+    "status": "PASÓ",
+    "assertion": "SOCIO_2 sin sesión no usurpó caja del cajero; sesion_id=NULL, trabajador=SOCIO_2.",
+    "evidence": "{\"res\":{\"success\":true,\"recovered\":false,\"message\":\"Compra recibida, inventario alimentado y egreso financiero registrado\",\"movimiento_caja_id\":\"35428708-6a03-4b2f-8bef-a1a9cbf6a735\",\"total\":9000,\"metodo_pago\":\"NEQUI\",\"sesion_id\":null},\"db\":{\"sesion\":null,\"trabajador\":\"22222222-2222-2222-2222-222222222222\"}}",
+    "error": null
+  },
+  {
+    "id": 19,
+    "name": "Seguridad: No-socio bloqueado",
+    "status": "PASÓ",
+    "assertion": "fn_is_socio() interceptó al mesero; BORRADOR, cero caja.",
+    "evidence": "{\"res\":{\"success\":false,\"message\":\"Acceso denegado: se requiere rol Socio Administrador\"},\"db\":{\"estado\":\"BORRADOR\",\"caja_cnt\":0}}",
+    "error": null
+  },
+  {
+    "id": 20,
+    "name": "Defensivo: Método con solo espacios en blanco",
+    "status": "PASÓ",
+    "assertion": "trim() rechaza \"   \" controladamente.",
+    "evidence": "{\"res\":{\"success\":false,\"message\":\"Método de pago inválido. Use: EFECTIVO, NEQUI o BANCOLOMBIA\"}}",
+    "error": null
+  }
+]
