@@ -185,7 +185,7 @@ const LeadPopup = () => {
 
         } catch (err) {
             console.error("Registration Error:", err);
-            setError(ERROR_MESSAGES.REGISTER_ERROR);
+            setError(err?.message || ERROR_MESSAGES.REGISTER_ERROR);
         } finally {
             setLoading(false);
         }

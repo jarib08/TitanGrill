@@ -51,7 +51,7 @@ const JoinClubSection = () => {
             setSuccess(true);
         } catch (err) {
             console.error("Error joining club:", err);
-            setError('Hubo un error al registrarte. Inténtalo de nuevo.');
+            setError(err?.message || 'Hubo un error al registrarte. Inténtalo de nuevo.');
         } finally {
             setLoading(false);
         }
