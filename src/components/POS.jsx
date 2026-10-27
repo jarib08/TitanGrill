@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { useNavigate } from 'react-router-dom';
-import { ShoppingCart, User, Search, Plus, Minus, Trash2, LogOut, CheckCircle, RefreshCw, Key, ShieldAlert, Award, QrCode, UserPlus, Camera, X, Check, AlertCircle, ChevronDown } from 'lucide-react';
+import { ShoppingCart, User, Search, Plus, Minus, Trash2, LogOut, CheckCircle, RefreshCw, Key, ShieldAlert, Award, QrCode, UserPlus, Camera, X, Check, AlertCircle, ChevronDown, GraduationCap } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
 import NumericInput from './ui/NumericInput';
 
@@ -39,6 +39,12 @@ const POS = () => {
     const [selectedClient, setSelectedClient] = useState(null);
     const [extraClients, setExtraClients] = useState([]); // Multi-stamp: additional clients for this sale
     const [isSearchingClient, setIsSearchingClient] = useState(false);
+
+    // ANEIAP Membership Verification in Counter
+    const [showAneiapModal, setShowAneiapModal] = useState(false);
+    const [aneiapDocInput, setAneiapDocInput] = useState('');
+    const [isLinkingAneiap, setIsLinkingAneiap] = useState(false);
+    const [aneiapLinkError, setAneiapLinkError] = useState('');
 
     // Mobile floating cart visibility state
     const [isCartDetailsVisible, setIsCartDetailsVisible] = useState(false);
@@ -336,14 +342,44 @@ const POS = () => {
         setCart(prev => prev.filter(item => item.id !== productId));
     };
 
-    const subtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-    // Calculate effective discount based on type
-    const effectiveDiscount = (() => {
+    const subtotal = cart.reduce((sum, item) => sum + (Number(item.price || item.precio || 0) * item.quantity), 0);
+    const cartUnitsCount = cart.reduce((sum, item) => sum + (item.quantity || 1), 0);
+
+    // Calculate effective discount based on type and ANEIAP 2 units/day daily cap
+    const { effectiveDiscount, aneiapDiscountUnits, aneiapDiscountedByItem } = (() => {
+        if (selectedClient?.es_aneiap) {
+            const disponibles = Math.max(0, Number(selectedClient.unidades_disponibles_hoy ?? 2));
+            if (disponibles === 0 || cart.length === 0) {
+                return { effectiveDiscount: 0, aneiapDiscountUnits: 0, aneiapDiscountTotal: 0, aneiapDiscountedByItem: {} };
+            }
+            // Expand items into single units with their prices and IDs
+            const units = [];
+            cart.forEach(item => {
+                const itemPrice = Number(item.price || item.precio || 0);
+                for (let i = 0; i < (item.quantity || 1); i++) {
+                    units.push({ id: item.id, price: itemPrice });
+                }
+            });
+            // Sort descending to discount highest priced items first
+            units.sort((a, b) => b.price - a.price);
+            const unitsToDiscount = units.slice(0, disponibles);
+            const discTotal = unitsToDiscount.reduce((acc, u) => acc + Math.round(u.price * 0.15), 0);
+            const byItem = {};
+            unitsToDiscount.forEach(u => {
+                byItem[u.id] = (byItem[u.id] || 0) + 1;
+            });
+            return {
+                effectiveDiscount: discTotal,
+                aneiapDiscountUnits: unitsToDiscount.length,
+                aneiapDiscountTotal: discTotal,
+                aneiapDiscountedByItem: byItem
+            };
+        }
         if (discountType === 'porcentaje') {
             const pct = Math.min(100, Math.max(0, discountInput));
-            return Math.round(subtotal * pct / 100);
+            return { effectiveDiscount: Math.round(subtotal * pct / 100), aneiapDiscountUnits: 0, aneiapDiscountTotal: 0, aneiapDiscountedByItem: {} };
         }
-        return Math.min(subtotal, Math.max(0, discountInput));
+        return { effectiveDiscount: Math.min(subtotal, Math.max(0, discountInput)), aneiapDiscountUnits: 0, aneiapDiscountTotal: 0, aneiapDiscountedByItem: {} };
     })();
     const finalTotal = Math.max(0, subtotal - effectiveDiscount);
 
@@ -372,6 +408,65 @@ const POS = () => {
             setClients(data);
         }
         setIsSearchingClient(false);
+    };
+
+    // ANEIAP status verification and discount application
+    const checkAndApplyAneiap = async (client) => {
+        if (!client?.id) return;
+        try {
+            const { data, error } = await supabase.rpc('fn_cliente_por_id', { p_id: client.id });
+            const freshClient = (!error && data?.success && data?.cliente) ? { ...client, ...data.cliente } : client;
+            setSelectedClient(freshClient);
+            if (freshClient.es_aneiap) {
+                const disp = freshClient.unidades_disponibles_hoy ?? 2;
+                if (disp > 0) {
+                    setSuccessMessage(`🎓 Cliente ANEIAP verificado: ${freshClient.nombre} (15 % en hasta ${disp} unidad${disp > 1 ? 'es' : ''} hoy).`);
+                } else {
+                    setSuccessMessage(`🎓 Cliente ANEIAP: ${freshClient.nombre} completó su límite de 2 unidades hoy. Se cobra a tarifa normal.`);
+                }
+            } else {
+                setSuccessMessage(`🔥 ¡Cliente asociado con éxito: ${freshClient.nombre}!`);
+            }
+        } catch (err) {
+            console.error('Error verificando membresía ANEIAP:', err);
+            setSelectedClient(client);
+        }
+    };
+
+    const handleVincularAneiap = async (e) => {
+        e.preventDefault();
+        if (!selectedClient?.id) return;
+        if (!aneiapDocInput.trim()) {
+            setAneiapLinkError('Ingresa el número de documento del estudiante.');
+            return;
+        }
+        setIsLinkingAneiap(true);
+        setAneiapLinkError('');
+        try {
+            const { data, error } = await supabase.rpc('fn_vincular_asociado_cajero', {
+                p_cliente_id: selectedClient.id,
+                p_documento: aneiapDocInput.trim()
+            });
+            if (error) throw error;
+            if (!data?.success) {
+                setAneiapLinkError(data?.message || 'No se pudo verificar el documento.');
+                return;
+            }
+            setShowAneiapModal(false);
+            setAneiapDocInput('');
+            setSelectedClient(prev => ({
+                ...prev,
+                es_aneiap: true,
+                estado_aneiap: 'ACTIVO',
+                unidades_disponibles_hoy: 2,
+                unidades_consumidas_hoy: 0
+            }));
+            setSuccessMessage(`🎉 ¡Membresía ANEIAP activada con carné presencial! Cupo disponible: 2 unidades con 15 % hoy.`);
+        } catch (err) {
+            setAneiapLinkError(err?.message || 'Error al vincular membresía.');
+        } finally {
+            setIsLinkingAneiap(false);
+        }
     };
 
     // QR Scanner Camera Lifecycle
@@ -531,8 +626,7 @@ const POS = () => {
                         setSuccessMessage(`🔥 Sello adicional para: ${client.nombre}`);
                     }
                 } else {
-                    setSelectedClient(client);
-                    setSuccessMessage(`🔥 ¡Cliente asociado con éxito: ${client.nombre}!`);
+                    await checkAndApplyAneiap(client);
                 }
             } else {
                 setErrorMessage(`Cliente no encontrado para el código: "${searchId}". Puedes crearlo a continuación.`);
@@ -870,7 +964,13 @@ const POS = () => {
             p_cliente_id: selectedClient ? selectedClient.id : null,
             p_total: finalTotal,
             p_metodo_pago: paymentMethod,
-            p_detalles: { items: cart, subtotal, discount },
+            p_detalles: {
+                items: cart,
+                subtotal,
+                discount,
+                descuento_tipo: selectedClient?.es_aneiap ? 'ANEIAP' : (discount > 0 ? 'MANUAL' : 'NINGUNO'),
+                unidades_aneiap_solicitadas: aneiapDiscountUnits
+            },
             p_monto_efectivo: paymentMethod === 'MIXTO' ? Number(cashAmount) : 0,
             p_monto_nequi: paymentMethod === 'MIXTO' ? Number(nequiAmount) : 0,
             p_monto_bancolombia: paymentMethod === 'MIXTO' ? Number(bancolombiaAmount) : 0,
@@ -1216,12 +1316,21 @@ const POS = () => {
                                     <p className="text-sm">El carrito está vacío</p>
                                 </div>
                             ) : (
-                                cart.map(item => (
-                                    <div key={item.id} className="flex justify-between items-center bg-zinc-950 p-3 rounded-lg border border-zinc-850">
-                                        <div>
-                                            <h4 className="font-semibold text-sm text-zinc-200">{item.name}</h4>
-                                            <span className="text-xs text-zinc-500">${item.price.toLocaleString()}</span>
-                                        </div>
+                                cart.map(item => {
+                                    const discountedUnits = aneiapDiscountedByItem[item.id] || 0;
+                                    return (
+                                        <div key={item.id} className="flex justify-between items-center bg-zinc-950 p-3 rounded-lg border border-zinc-850">
+                                            <div>
+                                                <div className="flex items-center gap-1.5 flex-wrap">
+                                                    <h4 className="font-semibold text-sm text-zinc-200">{item.name}</h4>
+                                                    {discountedUnits > 0 && (
+                                                        <span className="text-[9px] bg-amber-500/15 text-amber-400 px-1.5 py-0.5 rounded border border-amber-500/30 font-bold">
+                                                            🎓 15% ({discountedUnits === item.quantity ? `${discountedUnits} unid.` : `${discountedUnits} de ${item.quantity} unid.`})
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <span className="text-xs text-zinc-500">${item.price.toLocaleString()}</span>
+                                            </div>
                                         <div className="flex items-center gap-3">
                                             <button 
                                                 onClick={() => updateQuantity(item.id, -1)}
@@ -1243,8 +1352,9 @@ const POS = () => {
                                                 <Trash2 size={16} />
                                             </button>
                                         </div>
-                                    </div>
-                                ))
+                                        </div>
+                                    );
+                                })
                             )}
                         </div>
 
@@ -1295,7 +1405,7 @@ const POS = () => {
                                                 key={c.id}
                                                 onClick={() => {
                                                     if (!selectedClient) {
-                                                        setSelectedClient(c);
+                                                        checkAndApplyAneiap(c);
                                                     } else {
                                                         if (c.id === selectedClient.id || extraClients.some(ec => ec.id === c.id)) {
                                                             setErrorMessage(`⚠️ ${c.nombre} ya tiene sello asignado en esta venta.`);
@@ -1331,18 +1441,46 @@ const POS = () => {
 
                                     <div className="flex justify-between items-center bg-fire/10 border border-fire/30 p-3 rounded-lg animate-fadeIn">
                                         <div>
-                                            <p className="text-sm font-bold text-fire">{selectedClient.nombre}</p>
+                                            <div className="flex items-center gap-1.5 flex-wrap">
+                                                <p className="text-sm font-bold text-fire">{selectedClient.nombre}</p>
+                                                {selectedClient.es_aneiap && (
+                                                    <span className="bg-amber-500/20 text-amber-400 text-[10px] font-black px-2 py-0.5 rounded-full border border-amber-500/40 flex items-center gap-1">
+                                                        <GraduationCap size={11} />
+                                                        ANEIAP · 15% ({selectedClient.unidades_disponibles_hoy ?? 2}/2 hoy)
+                                                    </span>
+                                                )}
+                                            </div>
                                             <p className="text-xs text-zinc-400">{selectedClient.celular} • {selectedClient.stamps_count} Fuegos</p>
                                         </div>
-                                        <button 
-                                            onClick={() => {
-                                                setSelectedClient(null);
-                                                setExtraClients([]); // Limpiar extras si se quita el principal
-                                            }}
-                                            className="text-xs bg-fire/20 hover:bg-fire/35 text-fire px-2.5 py-1 rounded font-bold"
-                                        >
-                                            Quitar
-                                        </button>
+                                        <div className="flex items-center gap-2">
+                                            {!selectedClient.es_aneiap && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        setAneiapDocInput('');
+                                                        setAneiapLinkError('');
+                                                        setShowAneiapModal(true);
+                                                    }}
+                                                    className="bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 border border-amber-500/30 text-[11px] font-bold px-2 py-1 rounded-lg transition-colors flex items-center gap-1"
+                                                    title="Verificar y vincular carné ANEIAP presencialmente"
+                                                >
+                                                    <GraduationCap size={13} />
+                                                    Validar ANEIAP
+                                                </button>
+                                            )}
+                                            <button
+                                                onClick={() => {
+                                                    if (selectedClient?.es_aneiap && discountType === 'porcentaje' && discountInput === 15) {
+                                                        setDiscountInput(0);
+                                                    }
+                                                    setSelectedClient(null);
+                                                    setExtraClients([]); // Limpiar extras si se quita el principal
+                                                }}
+                                                className="text-xs bg-fire/20 hover:bg-fire/35 text-fire px-2.5 py-1 rounded font-bold"
+                                            >
+                                                Quitar
+                                            </button>
+                                        </div>
                                     </div>
 
                                     {selectedClient.stamps_count >= 10 && (
@@ -1504,52 +1642,79 @@ const POS = () => {
                                 <span>Subtotal</span>
                                 <span className="text-zinc-200">${subtotal.toLocaleString()}</span>
                             </div>
-                            <div className="space-y-2">
-                                <div className="flex justify-between items-center">
-                                    <span>Descuento</span>
-                                    <div className="flex bg-zinc-800 rounded-lg p-0.5 gap-0.5">
-                                        <button
-                                            type="button"
-                                            onClick={() => { setDiscountType('pesos'); setDiscountInput(0); }}
-                                            className={`px-2.5 py-1 rounded-md text-[10px] font-bold transition-all ${
-                                                discountType === 'pesos'
-                                                    ? 'bg-fire text-white shadow'
-                                                    : 'text-zinc-400 hover:text-white'
-                                            }`}
-                                        >
-                                            $ Pesos
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={() => { setDiscountType('porcentaje'); setDiscountInput(0); }}
-                                            className={`px-2.5 py-1 rounded-md text-[10px] font-bold transition-all ${
-                                                discountType === 'porcentaje'
-                                                    ? 'bg-fire text-white shadow'
-                                                    : 'text-zinc-400 hover:text-white'
-                                            }`}
-                                        >
-                                            % Porcentaje
-                                        </button>
-                                    </div>
-                                </div>
-                                <div className="flex justify-between items-center gap-2">
-                                    <span className="text-[11px] text-zinc-500">
-                                        {discountType === 'porcentaje' ? `= $${effectiveDiscount.toLocaleString()}` : ''}
-                                    </span>
-                                    <div className="flex items-center gap-1">
-                                        <span className="text-[10px] text-zinc-500 font-bold">
-                                            {discountType === 'pesos' ? '$' : '%'}
+                            {selectedClient?.es_aneiap ? (
+                                <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl space-y-1">
+                                    <div className="flex justify-between items-center text-xs">
+                                        <span className="font-bold text-amber-400 flex items-center gap-1">
+                                            <GraduationCap size={13} />
+                                            Descuento ANEIAP 15%
                                         </span>
-                                        <NumericInput
-                                            className="w-20 bg-zinc-900 border border-zinc-800 rounded px-2 py-0.5 text-right text-xs text-zinc-200"
-                                            value={discountInput}
-                                            onChange={setDiscountInput}
-                                            min={0}
-                                            max={discountType === 'porcentaje' ? 100 : subtotal}
-                                        />
+                                        <span className="font-mono font-bold text-amber-300">
+                                            {aneiapDiscountUnits > 0 ? `-$${effectiveDiscount.toLocaleString()}` : '$0'}
+                                        </span>
+                                    </div>
+                                    <div className="text-[11px] text-zinc-400 flex justify-between">
+                                        <span>Unidades con 15%:</span>
+                                        <span className="font-bold text-zinc-200">
+                                            {aneiapDiscountUnits} de {cartUnitsCount} unid. en orden
+                                        </span>
+                                    </div>
+                                    <div className="text-[10px] text-zinc-500">
+                                        {selectedClient.unidades_disponibles_hoy === 0 ? (
+                                            <span className="text-amber-500 font-medium">⚠️ Límite diario de 2 unidades alcanzado hoy. Se cobra a tarifa normal.</span>
+                                        ) : (
+                                            <span>Cupo disponible hoy: {selectedClient.unidades_disponibles_hoy ?? 2}/2 unidades.</span>
+                                        )}
                                     </div>
                                 </div>
-                            </div>
+                            ) : (
+                                <div className="space-y-2">
+                                    <div className="flex justify-between items-center">
+                                        <span>Descuento</span>
+                                        <div className="flex bg-zinc-800 rounded-lg p-0.5 gap-0.5">
+                                            <button
+                                                type="button"
+                                                onClick={() => { setDiscountType('pesos'); setDiscountInput(0); }}
+                                                className={`px-2.5 py-1 rounded-md text-[10px] font-bold transition-all ${
+                                                    discountType === 'pesos'
+                                                        ? 'bg-fire text-white shadow'
+                                                        : 'text-zinc-400 hover:text-white'
+                                                }`}
+                                            >
+                                                $ Pesos
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => { setDiscountType('porcentaje'); setDiscountInput(0); }}
+                                                className={`px-2.5 py-1 rounded-md text-[10px] font-bold transition-all ${
+                                                    discountType === 'porcentaje'
+                                                        ? 'bg-fire text-white shadow'
+                                                        : 'text-zinc-400 hover:text-white'
+                                                }`}
+                                            >
+                                                % Porcentaje
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div className="flex justify-between items-center gap-2">
+                                        <span className="text-[11px] text-zinc-500">
+                                            {discountType === 'porcentaje' ? `= $${effectiveDiscount.toLocaleString()}` : ''}
+                                        </span>
+                                        <div className="flex items-center gap-1">
+                                            <span className="text-[10px] text-zinc-500 font-bold">
+                                                {discountType === 'pesos' ? '$' : '%'}
+                                            </span>
+                                            <NumericInput
+                                                className="w-20 bg-zinc-900 border border-zinc-800 rounded px-2 py-0.5 text-right text-xs text-zinc-200"
+                                                value={discountInput}
+                                                onChange={setDiscountInput}
+                                                min={0}
+                                                max={discountType === 'porcentaje' ? 100 : subtotal}
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
                             <div className="flex justify-between border-t border-zinc-800 pt-3 text-lg font-bold text-white">
                                 <span>Total</span>
                                 <span className="text-fire">${finalTotal.toLocaleString()}</span>
@@ -2019,6 +2184,89 @@ const POS = () => {
                                 Cancelar
                             </button>
                         </div>
+                    </div>
+                </div>
+            )}
+            {/* Modal: Verificación Presencial Carné ANEIAP */}
+            {showAneiapModal && selectedClient && (
+                <div className="fixed inset-0 bg-black/85 backdrop-blur-xs flex items-center justify-center p-4 z-[1060]">
+                    <div className="w-full max-w-md bg-zinc-900 border border-amber-500/40 rounded-2xl p-6 shadow-2xl space-y-4">
+                        <div className="flex justify-between items-center border-b border-zinc-800 pb-3">
+                            <h4 className="text-sm md:text-base font-bold text-amber-400 flex items-center gap-2">
+                                <GraduationCap size={18} />
+                                Validación Presencial de Carné ANEIAP
+                            </h4>
+                            <button
+                                onClick={() => setShowAneiapModal(false)}
+                                className="text-zinc-500 hover:text-white p-1"
+                            >
+                                <X size={16} />
+                            </button>
+                        </div>
+
+                        <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800 text-xs space-y-1">
+                            <p className="text-zinc-400">Cliente a vincular: <span className="text-white font-bold">{selectedClient.nombre}</span></p>
+                            <p className="text-zinc-500">Celular: {selectedClient.celular}</p>
+                        </div>
+
+                        <div className="p-3 bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs rounded-xl space-y-1">
+                            <p className="font-bold flex items-center gap-1">
+                                ⚠️ Protocolo de Seguridad Obligatorio:
+                            </p>
+                            <p className="text-zinc-300 text-[11px] leading-relaxed">
+                                Solicite al estudiante su <strong>carné físico o institucional digital</strong> de ANEIAP / Unimagdalena. Corrobore que el nombre coincida antes de activar el 15 % de descuento oficial.
+                            </p>
+                        </div>
+
+                        <form onSubmit={handleVincularAneiap} className="space-y-4">
+                            <div>
+                                <label className="text-xs font-bold uppercase tracking-wider text-zinc-400 block mb-1.5">
+                                    Número de Documento del Estudiante *
+                                </label>
+                                <input
+                                    type="text"
+                                    required
+                                    placeholder="Ej: 1082000000"
+                                    value={aneiapDocInput}
+                                    onChange={(e) => setAneiapDocInput(e.target.value.replace(/\D/g, ''))}
+                                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-sm text-white outline-none focus:border-amber-500"
+                                    autoFocus
+                                />
+                            </div>
+
+                            {aneiapLinkError && (
+                                <div className="p-2.5 bg-red-500/10 border border-red-500/30 text-red-400 text-xs rounded-xl text-center">
+                                    {aneiapLinkError}
+                                </div>
+                            )}
+
+                            <div className="flex gap-2 pt-2">
+                                <button
+                                    type="submit"
+                                    disabled={isLinkingAneiap || !aneiapDocInput.trim()}
+                                    className="flex-1 bg-amber-500 hover:bg-amber-400 text-black py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition-all disabled:opacity-50 flex items-center justify-center gap-1 shadow-lg"
+                                >
+                                    {isLinkingAneiap ? (
+                                        <>
+                                            <RefreshCw size={13} className="animate-spin" />
+                                            Verificando...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Check size={14} />
+                                            Confirmar Carné y Activar 15%
+                                        </>
+                                    )}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowAneiapModal(false)}
+                                    className="px-4 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 py-2.5 rounded-xl font-bold text-xs transition-all border border-zinc-700"
+                                >
+                                    Cancelar
+                                </button>
+                            </div>
+                        </form>
                     </div>
                 </div>
             )}

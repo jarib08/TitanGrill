@@ -137,7 +137,15 @@ const LoyaltyCard = ({ client: initialClient }) => {
                 <div className="flex justify-between items-start mb-1">
                     <div>
                         <h3 className="text-2xl font-serif font-bold tracking-wider text-[#e64a19] leading-none">TITAN GRILL</h3>
-                        <p className="text-[0.6rem] text-zinc-500 uppercase tracking-[0.3em] font-medium mt-1 pl-0.5">CLUB MEMBER</p>
+                        <div className="flex items-center gap-2 mt-1">
+                            <p className="text-[0.6rem] text-zinc-500 uppercase tracking-[0.3em] font-medium pl-0.5">CLUB MEMBER</p>
+                            {client?.es_aneiap && (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[8px] font-black tracking-wider uppercase bg-amber-500/15 text-amber-400 border border-amber-500/40 shadow-[0_0_8px_rgba(245,158,11,0.25)]">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
+                                    ANEIAP · 15%
+                                </span>
+                            )}
+                        </div>
                     </div>
                     <p className="text-[0.65rem] text-zinc-600 font-mono tracking-widest mt-1">
                         ID: {client?.id?.slice(0, 8) || '...'}
@@ -358,6 +366,11 @@ const LoyaltyCard = ({ client: initialClient }) => {
 
                             <div className="space-y-1">
                                 <p className="text-white font-bold text-base">{client?.nombre || 'Cliente'}</p>
+                                {client?.es_aneiap && (
+                                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-500/15 text-amber-400 border border-amber-500/40 my-1">
+                                        🎓 Miembro ANEIAP — 15 % de Descuento
+                                    </div>
+                                )}
                                 <p className="text-zinc-400 text-xs font-mono">{client?.stamps_count || 0} de 10 Fuegos</p>
                                 <p className="text-[11px] text-orange-400 font-medium pt-2">
                                     🔍 Muestra este QR al personal en caja para escanear fácilmente.

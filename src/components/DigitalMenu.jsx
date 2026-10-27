@@ -32,11 +32,24 @@ const DigitalMenu = () => {
     const [universityLocation, setUniversityLocation] = useState('');
     const [orderNotes, setOrderNotes] = useState('');
     const [formError, setFormError] = useState('');
+    const [localClient, setLocalClient] = useState(null);
 
     // Business WhatsApp Phone Number (Colombia +57)
     const BUSINESS_WHATSAPP = '573004126441';
 
     useEffect(() => {
+        try {
+            const raw = localStorage.getItem('titan_client');
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                setLocalClient(parsed);
+                if (parsed?.nombre) setCustomerName(parsed.nombre);
+                if (parsed?.celular) setCustomerPhone(parsed.celular);
+            }
+        } catch (e) {
+            // Ignorar error si el almacenamiento local está deshabilitado o corrupto
+            void e;
+        }
         fetchProducts();
     }, []);
 
@@ -115,6 +128,18 @@ const DigitalMenu = () => {
 
     const totalItemsCount = cart.reduce((sum, item) => sum + item.quantity, 0);
     const cartTotal = cart.reduce((sum, item) => sum + (Number(item.precio) * item.quantity), 0);
+    const isAneiap = Boolean(localClient?.es_aneiap);
+    const estimatedDiscount = (() => {
+        if (!isAneiap) return 0;
+        const units = [];
+        cart.forEach(item => {
+            const p = Number(item.precio || 0);
+            for (let i = 0; i < (item.quantity || 1); i++) units.push(p);
+        });
+        units.sort((a, b) => b - a);
+        return units.slice(0, 2).reduce((sum, p) => sum + Math.round(p * 0.15), 0);
+    })();
+    const estimatedFinalTotal = Math.max(0, cartTotal - estimatedDiscount);
 
     // Send Order to WhatsApp
     const handleSendWhatsAppOrder = (e) => {
@@ -146,6 +171,11 @@ const DigitalMenu = () => {
         message += `👤 *Cliente:* ${customerName.trim()}\n`;
         message += `📞 *Teléfono:* ${customerPhone.trim()}\n`;
 
+        if (isAneiap) {
+            message += `🎓 *Membresía ANEIAP:* Sí (Solicita 15 % de descuento referencial)\n`;
+            message += `⚠️ *Validación:* Sujeto a verificación en caja antes de despachar.\n`;
+        }
+
         let displayType = '';
         if (deliveryType === 'Domicilio') displayType = 'Domicilio — fuera de la U';
         else if (deliveryType === 'Recoger') displayType = 'Yo paso por el';
@@ -174,7 +204,14 @@ const DigitalMenu = () => {
         });
 
         message += `----------------------------------\n`;
-        message += `💰 *TOTAL A PAGAR:* $${cartTotal.toLocaleString()}\n`;
+        if (isAneiap && estimatedDiscount > 0) {
+            message += `💵 *Subtotal Carta:* $${cartTotal.toLocaleString()}\n`;
+            message += `🎓 *Descuento ANEIAP (15 % referencial, máx 2 unid.):* -$${estimatedDiscount.toLocaleString()}\n`;
+            message += `💰 *TOTAL ESTIMADO A PAGAR:* $${estimatedFinalTotal.toLocaleString()}\n`;
+            message += `*(Valor referencial: El valor definitivo se confirma con cupo diario en caja)*\n`;
+        } else {
+            message += `💰 *TOTAL A PAGAR:* $${cartTotal.toLocaleString()}\n`;
+        }
         message += `----------------------------------\n`;
         message += `¡Gracias por elegir Titan Grill! Por favor confirma la recepción de mi pedido.`;
 
@@ -506,8 +543,23 @@ const DigitalMenu = () => {
 
                             <div className="pt-2 border-t border-zinc-800 flex justify-between items-center">
                                 <div>
-                                    <span className="text-[10px] text-zinc-500 block">Total a pagar:</span>
-                                    <span className="text-lg font-extrabold text-fire">${cartTotal.toLocaleString()}</span>
+                                    {isAneiap && estimatedDiscount > 0 ? (
+                                        <>
+                                            <div className="flex items-center gap-1.5 mb-0.5">
+                                                <span className="text-[10px] text-zinc-500 line-through">${cartTotal.toLocaleString()}</span>
+                                                <span className="text-[9px] bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded font-black border border-amber-500/30">
+                                                    15% ANEIAP (máx 2 unid.)
+                                                </span>
+                                            </div>
+                                            <span className="text-lg font-extrabold text-amber-400 block">${estimatedFinalTotal.toLocaleString()}</span>
+                                            <span className="text-[9px] text-zinc-500 block leading-tight max-w-[190px]">* Total referencial sujeto a cupo diario (máx 2 unid.) en caja</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <span className="text-[10px] text-zinc-500 block">Total a pagar:</span>
+                                            <span className="text-lg font-extrabold text-fire">${cartTotal.toLocaleString()}</span>
+                                        </>
+                                    )}
                                 </div>
 
                                 <button
