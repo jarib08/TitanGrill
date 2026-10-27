@@ -1,0 +1,11 @@
+apertura,trabajador,estado,monto_apertura,monto_cierre_esperado,monto_cierre_contado,diferencia
+2026-09-05,Karen Berrio,CERRADA,82000,612731,612731,0
+2026-09-07,Trabajador 1,CERRADA,87000,,,
+2026-09-08,Administrador Principal,CERRADA,1000,10570,10570,0
+2026-09-09,Administrador Principal,CERRADA,1000,433000,433000,0
+2026-09-11,Administrador Principal,CERRADA,73000,613000,613000,0
+2026-09-14,Karen Berrio,CERRADA,60000,285800,285800,0
+2026-09-17,Karen Berrio,CERRADA,50000,298000,298000,0
+2026-09-29,Karen Berrio,CERRADA,73000,413000,413000,0
+2026-09-30,Karen Berrio,CERRADA,62000,99000,99000,0
+2026-10-13,Administrador Principal,ABIERTA,50000,,,

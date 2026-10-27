@@ -2194,6 +2194,17 @@ const AdminDashboard = () => {
     };
 
     // ── Cost Configuration Handlers ─────────────────────────────────────────
+    // Fecha local en YYYY-MM-DD. No se usa toISOString(): en Bogota (UTC-5)
+    // devuelve el dia anterior durante toda la tarde y la noche.
+    const fechaLocalISO = (d = new Date()) =>
+        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+    // Una version historica es la que ya tiene fecha_fin en el pasado: sigue
+    // activa porque sostiene el P&L de los periodos que cubrio, pero no debe
+    // poder editarse ni desactivarse desde la UI (desactivarla la borraria del
+    // pasado, porque fn_estado_resultados exige activo = true).
+    const costoEsHistorico = (c) => !!c.fecha_fin && c.fecha_fin < fechaLocalISO();
+
     const handleSaveCosto = async () => {
         if (!costoForm.nombre.trim() || !costoForm.monto) return;
         setActionLoading(true);
@@ -2207,14 +2218,58 @@ const AdminDashboard = () => {
                 periodicidad: costoForm.periodicidad,
                 creado_por: currentUserProfile?.id || null
             };
+            let mensaje = editingCosto ? 'Costo actualizado.' : 'Costo creado.';
+
             if (editingCosto) {
-                const { error } = await supabase.from('costos_configuracion').update({ ...payload, updated_at: new Date().toISOString() }).eq('id', editingCosto);
-                if (error) throw error;
+                const prev = costosList.find(c => c.id === editingCosto);
+                // Cambiar el monto, la periodicidad o el tipo altera lo que el
+                // motor contable devenga en periodos YA cerrados. Sobrescribir
+                // la fila reescribiria el P&L de meses anteriores, asi que en vez
+                // de eso se cierra la vigencia de la version actual y se crea una
+                // nueva desde hoy.
+                //
+                // La fila anterior se deja ACTIVA a proposito: fn_estado_resultados
+                // exige activo = true para devengar un costo, de modo que
+                // desactivarla la borraria tambien del pasado. Lo que la saca del
+                // presente es su fecha_fin, no el flag.
+                const afectaContabilidad = !!prev && (
+                    Number(prev.monto) !== payload.monto ||
+                    prev.periodicidad !== payload.periodicidad ||
+                    prev.tipo_costo !== payload.tipo_costo
+                );
+                const hoy = fechaLocalISO();
+                const empezoAntesDeHoy = !!prev?.fecha_inicio && prev.fecha_inicio < hoy;
+
+                if (afectaContabilidad && empezoAntesDeHoy) {
+                    const ayerDate = new Date();
+                    ayerDate.setDate(ayerDate.getDate() - 1);
+                    const ayer = fechaLocalISO(ayerDate);
+
+                    // 1. cerrar la version vigente (el prorrateo del motor es
+                    //    inclusivo en ambos extremos, asi que cerrar en 'ayer' y
+                    //    abrir en 'hoy' no genera solape ni doble conteo)
+                    const { error: errCierre } = await supabase
+                        .from('costos_configuracion')
+                        .update({ fecha_fin: ayer, updated_at: new Date().toISOString() })
+                        .eq('id', editingCosto);
+                    if (errCierre) throw errCierre;
+
+                    // 2. crear la version nueva, vigente desde hoy
+                    const { error: errNueva } = await supabase
+                        .from('costos_configuracion')
+                        .insert([{ ...payload, fecha_inicio: hoy, activo: true }]);
+                    if (errNueva) throw errNueva;
+
+                    mensaje = `Costo versionado: la version anterior queda vigente hasta ${ayer} y la nueva aplica desde hoy. El historico no cambia.`;
+                } else {
+                    const { error } = await supabase.from('costos_configuracion').update({ ...payload, updated_at: new Date().toISOString() }).eq('id', editingCosto);
+                    if (error) throw error;
+                }
             } else {
-                const { error } = await supabase.from('costos_configuracion').insert([payload]);
+                const { error } = await supabase.from('costos_configuracion').insert([{ ...payload, fecha_inicio: fechaLocalISO() }]);
                 if (error) throw error;
             }
-            alert(editingCosto ? 'Costo actualizado.' : 'Costo creado.');
+            alert(mensaje);
             setShowCostoModal(false);
             setCostoForm({ nombre: '', descripcion: '', tipo_costo: 'FIJO', categoria: 'OTROS', monto: '', periodicidad: 'MENSUAL' });
             setEditingCosto(null);
@@ -5397,15 +5452,22 @@ const AdminDashboard = () => {
                                 <div className="space-y-2">
                                     <p className="text-[10px] font-bold uppercase tracking-widest text-blue-400">Costos Fijos</p>
                                     {costosList.filter(c => c.tipo_costo === 'FIJO').map(c => (
-                                        <div key={c.id} className={`flex items-center justify-between p-3 rounded-lg border ${c.activo ? 'bg-zinc-950 border-zinc-800' : 'bg-zinc-950/50 border-zinc-800/50 opacity-60'}`}>
+                                        <div key={c.id} className={`flex items-center justify-between p-3 rounded-lg border ${costoEsHistorico(c) ? 'bg-zinc-950/40 border-zinc-800/40 opacity-50' : c.activo ? 'bg-zinc-950 border-zinc-800' : 'bg-zinc-950/50 border-zinc-800/50 opacity-60'}`}>
                                             <div>
-                                                <p className="text-xs font-bold text-zinc-200">{c.nombre} <span className="text-[10px] text-zinc-500 font-normal">({c.categoria})</span></p>
+                                                <p className="text-xs font-bold text-zinc-200">{c.nombre} <span className="text-[10px] text-zinc-500 font-normal">({c.categoria})</span>{costoEsHistorico(c) && <span className="ml-2 text-[9px] font-bold uppercase tracking-wider text-amber-500/80">histórico</span>}</p>
                                                 {c.descripcion && <p className="text-[10px] text-zinc-500">{c.descripcion}</p>}
                                                 <p className="text-[10px] text-zinc-400">${Number(c.monto).toLocaleString()} / {c.periodicidad}</p>
+                                                <p className="text-[9px] text-zinc-600">Vigente desde {c.fecha_inicio}{c.fecha_fin ? ` hasta ${c.fecha_fin}` : ' (sin fecha de fin)'}</p>
                                             </div>
                                             <div className="flex items-center gap-2">
-                                                <button onClick={() => { setEditingCosto(c.id); setCostoForm({ nombre: c.nombre, descripcion: c.descripcion || '', tipo_costo: c.tipo_costo, categoria: c.categoria, monto: c.monto, periodicidad: c.periodicidad }); setShowCostoModal(true); }} className="text-[10px] text-zinc-400 hover:text-white transition-colors">Editar</button>
-                                                <button onClick={() => handleToggleCosto(c)} disabled={actionLoading} className={`text-[10px] font-bold px-2 py-0.5 rounded ${c.activo ? 'bg-red-500/10 text-red-400' : 'bg-green-500/10 text-green-400'}`}>{c.activo ? 'Desactivar' : 'Activar'}</button>
+                                                {costoEsHistorico(c) ? (
+                                                    <span className="text-[9px] text-zinc-600 italic text-right max-w-[9rem]">Versión cerrada: sostiene el histórico</span>
+                                                ) : (
+                                                    <>
+                                                        <button onClick={() => { setEditingCosto(c.id); setCostoForm({ nombre: c.nombre, descripcion: c.descripcion || '', tipo_costo: c.tipo_costo, categoria: c.categoria, monto: c.monto, periodicidad: c.periodicidad }); setShowCostoModal(true); }} className="text-[10px] text-zinc-400 hover:text-white transition-colors">Editar</button>
+                                                        <button onClick={() => handleToggleCosto(c)} disabled={actionLoading} className={`text-[10px] font-bold px-2 py-0.5 rounded ${c.activo ? 'bg-red-500/10 text-red-400' : 'bg-green-500/10 text-green-400'}`}>{c.activo ? 'Desactivar' : 'Activar'}</button>
+                                                    </>
+                                                )}
                                             </div>
                                         </div>
                                     ))}
@@ -5417,15 +5479,22 @@ const AdminDashboard = () => {
                                 <div className="space-y-2">
                                     <p className="text-[10px] font-bold uppercase tracking-widest text-orange-400">Costos Variables</p>
                                     {costosList.filter(c => c.tipo_costo === 'VARIABLE').map(c => (
-                                        <div key={c.id} className={`flex items-center justify-between p-3 rounded-lg border ${c.activo ? 'bg-zinc-950 border-zinc-800' : 'bg-zinc-950/50 border-zinc-800/50 opacity-60'}`}>
+                                        <div key={c.id} className={`flex items-center justify-between p-3 rounded-lg border ${costoEsHistorico(c) ? 'bg-zinc-950/40 border-zinc-800/40 opacity-50' : c.activo ? 'bg-zinc-950 border-zinc-800' : 'bg-zinc-950/50 border-zinc-800/50 opacity-60'}`}>
                                             <div>
-                                                <p className="text-xs font-bold text-zinc-200">{c.nombre} <span className="text-[10px] text-zinc-500 font-normal">({c.categoria})</span></p>
+                                                <p className="text-xs font-bold text-zinc-200">{c.nombre} <span className="text-[10px] text-zinc-500 font-normal">({c.categoria})</span>{costoEsHistorico(c) && <span className="ml-2 text-[9px] font-bold uppercase tracking-wider text-amber-500/80">histórico</span>}</p>
                                                 {c.descripcion && <p className="text-[10px] text-zinc-500">{c.descripcion}</p>}
                                                 <p className="text-[10px] text-zinc-400">${Number(c.monto).toLocaleString()} / {c.periodicidad}</p>
+                                                <p className="text-[9px] text-zinc-600">Vigente desde {c.fecha_inicio}{c.fecha_fin ? ` hasta ${c.fecha_fin}` : ' (sin fecha de fin)'}</p>
                                             </div>
                                             <div className="flex items-center gap-2">
-                                                <button onClick={() => { setEditingCosto(c.id); setCostoForm({ nombre: c.nombre, descripcion: c.descripcion || '', tipo_costo: c.tipo_costo, categoria: c.categoria, monto: c.monto, periodicidad: c.periodicidad }); setShowCostoModal(true); }} className="text-[10px] text-zinc-400 hover:text-white transition-colors">Editar</button>
-                                                <button onClick={() => handleToggleCosto(c)} disabled={actionLoading} className={`text-[10px] font-bold px-2 py-0.5 rounded ${c.activo ? 'bg-red-500/10 text-red-400' : 'bg-green-500/10 text-green-400'}`}>{c.activo ? 'Desactivar' : 'Activar'}</button>
+                                                {costoEsHistorico(c) ? (
+                                                    <span className="text-[9px] text-zinc-600 italic text-right max-w-[9rem]">Versión cerrada: sostiene el histórico</span>
+                                                ) : (
+                                                    <>
+                                                        <button onClick={() => { setEditingCosto(c.id); setCostoForm({ nombre: c.nombre, descripcion: c.descripcion || '', tipo_costo: c.tipo_costo, categoria: c.categoria, monto: c.monto, periodicidad: c.periodicidad }); setShowCostoModal(true); }} className="text-[10px] text-zinc-400 hover:text-white transition-colors">Editar</button>
+                                                        <button onClick={() => handleToggleCosto(c)} disabled={actionLoading} className={`text-[10px] font-bold px-2 py-0.5 rounded ${c.activo ? 'bg-red-500/10 text-red-400' : 'bg-green-500/10 text-green-400'}`}>{c.activo ? 'Desactivar' : 'Activar'}</button>
+                                                    </>
+                                                )}
                                             </div>
                                         </div>
                                     ))}
