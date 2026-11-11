@@ -929,13 +929,26 @@ const AdminDashboard = () => {
     const fetchSaldoGlobal = async () => {
         try {
             const { data, error } = await supabase.rpc('calcular_saldo_global');
-            if (error) throw error;
-            if (data && data.success) {
+            if (!error && data && data.success) {
                 setSaldoGlobal({
                     efectivo: Number(data.efectivo || 0),
                     nequi: Number(data.nequi || 0),
                     bancolombia: Number(data.bancolombia || 0)
                 });
+                return;
+            }
+            // Fallback directo a movimientos_caja si RPC no tiene permiso o no retorna éxito
+            const { data: movs, error: movsErr } = await supabase.from('movimientos_caja').select('metodo_pago, tipo, monto');
+            if (!movsErr && movs) {
+                let ef = 0, nq = 0, bc = 0;
+                movs.forEach(m => {
+                    const monto = Number(m.monto || 0);
+                    const delta = m.tipo === 'INGRESO' ? monto : -monto;
+                    if (m.metodo_pago === 'EFECTIVO') ef += delta;
+                    else if (m.metodo_pago === 'NEQUI') nq += delta;
+                    else if (m.metodo_pago === 'BANCOLOMBIA') bc += delta;
+                });
+                setSaldoGlobal({ efectivo: ef, nequi: nq, bancolombia: bc });
             }
         } catch (err) {
             console.error('Error fetching saldo global:', err);
