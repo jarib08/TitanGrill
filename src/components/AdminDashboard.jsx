@@ -1253,7 +1253,16 @@ const AdminDashboard = () => {
             // --- Cash processing ---
             const movimientos = getResData(results[5]);
             const totalIngresos = movimientos.filter(m => m.tipo === 'INGRESO' && m.tipo_operacion !== 'TRANSFERENCIA_INTERNA').reduce((sum, m) => sum + Number(m.monto || 0), 0);
-            const totalEgresos = movimientos.filter(m => m.tipo === 'EGRESO' && m.tipo_operacion !== 'TRANSFERENCIA_INTERNA').reduce((sum, m) => sum + Number(m.monto || 0), 0);
+            
+            // Reversiones de ventas anuladas (compensan ventas ya excluidas; no son gastos de operación)
+            const reversionesAnulacion = movimientos.filter(m => m.tipo === 'EGRESO' && m.venta_id && !m.compra_id && !m.gasto_id && !m.liquidacion_id).reduce((sum, m) => sum + Number(m.monto || 0), 0);
+            
+            // Egresos operativos puros (excluye transferencias internas y reversiones de anulación)
+            const totalEgresos = movimientos.filter(m => m.tipo === 'EGRESO' && m.tipo_operacion !== 'TRANSFERENCIA_INTERNA' && !(m.venta_id && !m.compra_id && !m.gasto_id && !m.liquidacion_id)).reduce((sum, m) => sum + Number(m.monto || 0), 0);
+            
+            // Total egresos brutos de caja (incluyendo reversiones)
+            const totalEgresosBrutos = movimientos.filter(m => m.tipo === 'EGRESO' && m.tipo_operacion !== 'TRANSFERENCIA_INTERNA').reduce((sum, m) => sum + Number(m.monto || 0), 0);
+
             const efectivoIngresos = movimientos.filter(m => m.tipo === 'INGRESO' && m.metodo_pago === 'EFECTIVO').reduce((sum, m) => sum + Number(m.monto || 0), 0);
             const efectivoEgresos = movimientos.filter(m => m.tipo === 'EGRESO' && m.metodo_pago === 'EFECTIVO').reduce((sum, m) => sum + Number(m.monto || 0), 0);
             const nequiIngresos = movimientos.filter(m => m.tipo === 'INGRESO' && m.metodo_pago === 'NEQUI').reduce((sum, m) => sum + Number(m.monto || 0), 0);
@@ -1264,6 +1273,8 @@ const AdminDashboard = () => {
             setCashStats({
                 totalIngresos,
                 totalEgresos,
+                totalEgresosBrutos,
+                reversionesAnulacion,
                 netCash: totalIngresos - totalEgresos,
                 efectivoIngresos,
                 efectivoEgresos,
@@ -3133,9 +3144,16 @@ const AdminDashboard = () => {
                                 </div>
 
                                 <div className="bg-zinc-900 border border-red-500/20 p-5 rounded-2xl">
-                                    <p className="text-red-400 text-[10px] uppercase tracking-widest font-bold mb-2">Total Egresado</p>
+                                    <p className="text-red-400 text-[10px] uppercase tracking-widest font-bold mb-2">Total Egresado (Operativo)</p>
                                     <h3 className="text-2xl font-bold text-red-400">${(cashStats?.totalEgresos || 0).toLocaleString()}</h3>
-                                    <span className="text-[10px] text-zinc-500 bg-zinc-950/50 inline-block px-2 py-0.5 rounded mt-2">Salidas</span>
+                                    <div className="flex flex-wrap items-center gap-2 mt-2">
+                                        <span className="text-[10px] text-zinc-500 bg-zinc-950/50 inline-block px-2 py-0.5 rounded">Salidas Operativas</span>
+                                        {Boolean(cashStats?.reversionesAnulacion && cashStats.reversionesAnulacion > 0) && (
+                                            <span className="text-[10px] text-yellow-400/80 bg-yellow-500/10 inline-block px-2 py-0.5 rounded" title="Reversiones de ventas anuladas excluidas del egreso operativo">
+                                                +${(cashStats.reversionesAnulacion).toLocaleString()} en reversiones
+                                            </span>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
 
@@ -4429,6 +4447,15 @@ const AdminDashboard = () => {
                                                             <p className="text-zinc-500 text-[10px] mt-0.5">Se convierten en inventario; impactan el resultado como COGS al venderse.</p>
                                                         </div>
                                                         <span className="font-mono font-bold text-blue-400 shrink-0">{fmt(f.compras_recibidas)}</span>
+                                                    </div>
+                                                )}
+                                                {Number(e.reversiones_anulacion_venta || f.reversiones_anulacion_venta || 0) > 0 && (
+                                                    <div className="flex justify-between items-start gap-4 text-xs py-2 border-b border-zinc-800/60">
+                                                        <div>
+                                                            <span className="text-zinc-200 font-semibold">Reversiones por anulación de ventas</span>
+                                                            <p className="text-zinc-500 text-[10px] mt-0.5">Devoluciones de caja por ventas anuladas. Excluidas para evitar doble descuento contable.</p>
+                                                        </div>
+                                                        <span className="font-mono font-bold text-yellow-400 shrink-0">{fmt(e.reversiones_anulacion_venta || f.reversiones_anulacion_venta)}</span>
                                                     </div>
                                                 )}
                                                 {Number(e.nomina_pendiente) > 0 && (
