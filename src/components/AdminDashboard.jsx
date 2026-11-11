@@ -4309,6 +4309,15 @@ const AdminDashboard = () => {
                             const avisos = pnl.advertencias || [];
                             const detalle = pnl.detalle_costos || [];
 
+                            // Desacoplar reversiones de ventas anuladas de los egresos operativos si la RPC aún no fue actualizada en DB
+                            const reversionesDetectadas = Number(e.reversiones_anulacion_venta || f.reversiones_anulacion_venta || cashStats?.reversionesAnulacion || 0);
+                            const ajusteReversiones = (e.reversiones_anulacion_venta === undefined && cashStats?.reversionesAnulacion)
+                                ? Math.min(Number(e.otros_egresos_caja || 0), Number(cashStats.reversionesAnulacion))
+                                : 0;
+                            const otrosEgresosPuros = Math.max(0, Number(e.otros_egresos_caja || 0) - ajusteReversiones);
+                            const totalGastosOpAjustado = Math.max(0, Number(e.total || 0) - ajusteReversiones);
+                            const resultadoOpAjustado = Number(r.resultado_operativo || 0) + ajusteReversiones;
+
                             return (
                                 <div className="space-y-6">
                                     {/* Advertencias del motor contable */}
@@ -4372,7 +4381,7 @@ const AdminDashboard = () => {
 
                                         <div className="bg-zinc-900 border border-red-500/30 p-5 rounded-2xl shadow-lg">
                                             <p className="text-red-400 text-[10px] uppercase tracking-widest font-bold mb-1">Egresos del Periodo</p>
-                                            <h3 className="text-2xl font-bold text-red-400">{fmt(e.total)}</h3>
+                                            <h3 className="text-2xl font-bold text-red-400">{fmt(totalGastosOpAjustado)}</h3>
                                             <span className="text-[10px] text-zinc-400 bg-zinc-950/50 inline-block px-2 py-0.5 rounded mt-2">
                                                 Nomina + gastos + costos fijos y variables
                                             </span>
@@ -4380,8 +4389,8 @@ const AdminDashboard = () => {
 
                                         <div className="bg-zinc-900 border border-blue-500/40 p-5 rounded-2xl shadow-lg">
                                             <p className="text-blue-400 text-[10px] uppercase tracking-widest font-bold mb-1">Resultado Operativo</p>
-                                            <h3 className={`text-2xl font-bold ${Number(r.resultado_operativo) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                                {fmt(r.resultado_operativo)}
+                                            <h3 className={`text-2xl font-bold ${Number(resultadoOpAjustado) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                                {fmt(resultadoOpAjustado)}
                                             </h3>
                                             <span className="text-[10px] text-blue-300/60 bg-blue-500/10 inline-block px-2 py-0.5 rounded mt-2">
                                                 Margen contribucion: {r.margen_contribucion_pct}%
@@ -4402,7 +4411,7 @@ const AdminDashboard = () => {
                                                 { l: '(=) UTILIDAD BRUTA', val: r.utilidad_bruta, cls: 'text-gold', divider: true, strong: true },
                                                 { l: '(-) Nomina pagada', val: -Number(e.nomina_pagada || 0), cls: 'text-red-400' },
                                                 { l: '(-) Gastos operativos', val: -Number(e.gastos_operativos || 0), cls: 'text-red-400' },
-                                                { l: '(-) Otros egresos de caja', val: -Number(e.otros_egresos_caja || 0), cls: 'text-red-400' },
+                                                { l: '(-) Otros egresos de caja', val: -Number(otrosEgresosPuros || 0), cls: 'text-red-400' },
                                                 { l: `(-) Costos fijos (prorrateados a ${per.dias}d)`, val: -Number(e.costos_fijos || 0), cls: 'text-red-400' },
                                                 { l: `(-) Costos variables (prorrateados a ${per.dias}d)`, val: -Number(e.costos_variables || 0), cls: 'text-red-400' },
                                             ].map((row, idx) => (
@@ -4416,8 +4425,8 @@ const AdminDashboard = () => {
                                             ))}
                                             <div className="flex justify-between items-center py-4 bg-zinc-950 px-4 rounded-xl text-lg font-bold border border-zinc-800 mt-3">
                                                 <span className="text-white">(=) RESULTADO OPERATIVO</span>
-                                                <span className={`font-mono ${Number(r.resultado_operativo) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                                    {fmt(r.resultado_operativo)}
+                                                <span className={`font-mono ${Number(resultadoOpAjustado) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                                    {fmt(resultadoOpAjustado)}
                                                 </span>
                                             </div>
                                         </div>
@@ -4449,13 +4458,13 @@ const AdminDashboard = () => {
                                                         <span className="font-mono font-bold text-blue-400 shrink-0">{fmt(f.compras_recibidas)}</span>
                                                     </div>
                                                 )}
-                                                {Number(e.reversiones_anulacion_venta || f.reversiones_anulacion_venta || 0) > 0 && (
+                                                {reversionesDetectadas > 0 && (
                                                     <div className="flex justify-between items-start gap-4 text-xs py-2 border-b border-zinc-800/60">
                                                         <div>
                                                             <span className="text-zinc-200 font-semibold">Reversiones por anulación de ventas</span>
                                                             <p className="text-zinc-500 text-[10px] mt-0.5">Devoluciones de caja por ventas anuladas. Excluidas para evitar doble descuento contable.</p>
                                                         </div>
-                                                        <span className="font-mono font-bold text-yellow-400 shrink-0">{fmt(e.reversiones_anulacion_venta || f.reversiones_anulacion_venta)}</span>
+                                                        <span className="font-mono font-bold text-yellow-400 shrink-0">{fmt(reversionesDetectadas)}</span>
                                                     </div>
                                                 )}
                                                 {Number(e.nomina_pendiente) > 0 && (

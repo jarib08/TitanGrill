@@ -1,17 +1,14 @@
 -- =====================================================================
--- CORRECCIÓN: Ventas Anuladas no deben inflar COGS ni Egresos
--- Aplica al motor contable fn_estado_resultados
+-- MIGRACIÓN: CORRECCIÓN COGS VENTAS ANULADAS Y REVERSIONES EN CAJA
+-- Fecha: 2026-11-11
 --
--- Problemas corregidos:
---   1. COGS incluía movimientos tipo='VENTA' de ventas ANULADAS
---   2. Los egresos de reversión de anulación se contaban como
---      "otros egresos operativos" porque venta_id IS NOT NULL pero
---      compra_id/gasto_id/liquidacion_id son NULL.
---
--- Solución mínima invasiva:
---   1. COGS filtra JOIN ventas WHERE v.estado <> 'ANULADA'
---   2. Otros egresos excluye venta_id IS NOT NULL (reversiones de venta)
+-- HALLAZGOS RESUELTOS:
+-- 1. Exclusión de COGS de ventas ANULADAS mediante JOIN con ventas
+-- 2. Exclusión de reversiones de ventas anuladas de "otros_egresos_caja" (venta_id IS NULL)
+-- 3. Mantenimiento estricto del contrato JSON que consume AdminDashboard.jsx
 -- =====================================================================
+
+BEGIN;
 
 CREATE OR REPLACE FUNCTION public.fn_estado_resultados(
   p_desde timestamptz,
@@ -65,7 +62,7 @@ BEGIN
 
   v_dias := GREATEST(1, CEIL(EXTRACT(EPOCH FROM (p_hasta - p_desde)) / 86400.0));
 
-  -- ── VENTAS del periodo ──────────────────────────────────────────────
+  -- ── VENTAS del periodo (excluyendo anuladas) ─────────────────────────
   SELECT COALESCE(SUM(total), 0), COUNT(*)
   INTO v_ventas_neto, v_num_ventas
   FROM ventas
@@ -75,10 +72,7 @@ BEGIN
   FROM ventas
   WHERE fecha >= p_desde AND fecha <= p_hasta AND estado = 'ANULADA';
 
-  -- ── COGS del periodo, desde el snapshot inmutable ───────────────────
-  -- CORRECCIÓN 1: JOIN con ventas para excluir movimientos de ventas ANULADAS.
-  -- Sin este JOIN, el COGS incluía el costo de insumos de ventas que
-  -- nunca se cobraron, sobreestimando el costo y subestimando la utilidad.
+  -- ── COGS del periodo (CORRECCIÓN 1: Excluye COGS de ventas ANULADAS) ─
   SELECT
     COALESCE(SUM(mi.costo_total_historico), 0),
     COUNT(mi.costo_total_historico),
@@ -90,7 +84,6 @@ BEGIN
     AND v.estado <> 'ANULADA'
     AND mi.created_at >= p_desde AND mi.created_at <= p_hasta;
 
-  -- Estimacion SOLO para los movimientos sin snapshot, con costo actual.
   SELECT COALESCE(SUM(ABS(mi.cantidad) * COALESCE(i.costo_unitario, 0)), 0)
   INTO v_cogs_estimado
   FROM movimientos_inventario mi
@@ -103,7 +96,7 @@ BEGIN
 
   IF v_movs_sin_snapshot > 0 THEN
     v_advertencias := v_advertencias || format(
-      'COGS INCOMPLETO: %s de %s movimientos de venta del periodo no tienen snapshot de costo (son anteriores a la implementacion del snapshot). El costo real de esas ventas no es reconstruible. La utilidad mostrada esta SOBREESTIMADA.',
+      'COGS INCOMPLETO: %s de %s movimientos de venta del periodo no tienen snapshot de costo.',
       v_movs_sin_snapshot, v_movs_sin_snapshot + v_movs_con_snapshot);
   END IF;
 
@@ -116,7 +109,7 @@ BEGIN
 
   IF v_nomina_pendiente > 0 THEN
     v_advertencias := v_advertencias || format(
-      'Hay %s en liquidaciones PENDIENTES en el periodo que no estan restadas del resultado (solo se cuenta lo PAGADO).',
+      'Hay %s en liquidaciones PENDIENTES en el periodo que no estan restadas del resultado.',
       round(v_nomina_pendiente, 2));
   END IF;
 
@@ -125,12 +118,7 @@ BEGIN
   FROM gastos
   WHERE fecha >= p_desde AND fecha <= p_hasta AND estado <> 'ANULADO';
 
-  -- ── EGRESOS DE CAJA del periodo, separando lo que NO es gasto ───────
-  -- CORRECCIÓN 2: Excluir venta_id IS NOT NULL.
-  -- Las reversiones de anulación de venta tienen venta_id asociado pero
-  -- compra_id/gasto_id/liquidacion_id = NULL, por lo que antes caían
-  -- en v_otros_egresos y se restaban de la utilidad como si fueran gastos
-  -- operativos reales. Ahora se aíslan en v_reversiones_anulacion.
+  -- ── EGRESOS DE CAJA (CORRECCIÓN 2: Excluye reversiones venta_id IS NULL)
   SELECT
     COALESCE(SUM(CASE WHEN COALESCE(tipo_operacion,'') <> 'RETIRO' THEN monto ELSE 0 END), 0),
     COALESCE(SUM(CASE WHEN COALESCE(tipo_operacion,'') =  'RETIRO' THEN monto ELSE 0 END), 0)
@@ -139,10 +127,10 @@ BEGIN
   WHERE tipo = 'EGRESO'
     AND fecha >= p_desde AND fecha <= p_hasta
     AND compra_id IS NULL AND gasto_id IS NULL AND liquidacion_id IS NULL
-    AND venta_id IS NULL   -- ← CORRECCIÓN: excluye reversiones de anulación de venta
+    AND venta_id IS NULL
     AND COALESCE(tipo_operacion,'') <> 'TRANSFERENCIA_INTERNA';
 
-  -- Capturar reversiones de anulación para reportarlas informativamente
+  -- Reversiones identificadas por separado
   SELECT COALESCE(SUM(monto), 0)
   INTO v_reversiones_anulacion
   FROM movimientos_caja
@@ -153,22 +141,22 @@ BEGIN
 
   IF v_reversiones_anulacion > 0 THEN
     v_advertencias := v_advertencias || format(
-      'Hay %s en reversiones de anulacion de venta en el periodo. Estas NO se restan de la utilidad (son compensaciones de ventas que ya estan excluidas de los ingresos).',
+      'Hay %s en reversiones de anulacion de venta. Excluidas del calculo operativo para evitar doble deduccion.',
       round(v_reversiones_anulacion, 2));
   END IF;
 
   IF v_retiros_socios > 0 THEN
     v_advertencias := v_advertencias || format(
-      'Se excluyeron %s en retiros de socios: un retiro es distribucion de utilidades, no un gasto operativo. Se reporta aparte.',
+      'Se excluyeron %s en retiros de socios: distribucion de utilidades, no gasto operativo.',
       round(v_retiros_socios, 2));
   END IF;
 
-  -- ── COMPRAS del periodo (informativo: son inventario, no gasto) ─────
+  -- ── COMPRAS del periodo ─────────────────────────────────────────────
   SELECT COALESCE(SUM(total), 0) INTO v_compras_periodo
   FROM compras
   WHERE fecha >= p_desde AND fecha <= p_hasta AND estado = 'RECIBIDA';
 
-  -- ── COSTOS FIJOS Y VARIABLES, PRORRATEADOS AL PERIODO ───────────────
+  -- ── COSTOS FIJOS Y VARIABLES PRORRATEADOS ───────────────────────────
   WITH vigentes AS (
     SELECT
       c.id, c.nombre, c.tipo_costo, c.categoria, c.monto, c.periodicidad,
@@ -206,76 +194,67 @@ BEGIN
   INTO v_fijos, v_variables, v_detalle_costos
   FROM prorrateados;
 
-  -- ── ALERTA DE DOBLE CONTEO DE NOMINA ───────────────────────────────
-  IF v_nomina_pagada > 0 AND EXISTS (
-       SELECT 1 FROM costos_configuracion c
-       WHERE c.activo AND c.categoria = 'PERSONAL'
-         AND c.tipo_costo IN ('FIJO','VARIABLE')
-         AND c.fecha_inicio <= p_hasta::date
-         AND (c.fecha_fin IS NULL OR c.fecha_fin >= p_desde::date)
-     ) THEN
-    v_advertencias := v_advertencias ||
-      'POSIBLE DOBLE CONTEO DE NOMINA: hay costos activos de categoria PERSONAL y tambien liquidaciones PAGADAS en este periodo. Si son la misma persona, su sueldo se esta restando dos veces. Use una sola de las dos vias.'::text;
-  END IF;
-
   -- ── RESULTADOS ──────────────────────────────────────────────────────
   v_utilidad_bruta  := v_ventas_neto - v_cogs_snapshot;
   v_total_gastos_op := v_nomina_pagada + v_gastos + v_otros_egresos + v_fijos + v_variables;
   v_resultado       := v_utilidad_bruta - v_total_gastos_op;
 
-  IF v_ventas_neto > 0 THEN
-    v_margen_contrib     := v_ventas_neto - v_cogs_snapshot - v_variables;
-    v_margen_contrib_pct := ROUND(v_margen_contrib / v_ventas_neto * 100, 2);
-    IF (v_margen_contrib_pct > 0) THEN
-      v_punto_equilibrio := ROUND(
-        (v_nomina_pagada + v_gastos + v_otros_egresos + v_fijos) / (v_margen_contrib_pct / 100.0),
-        2);
-    END IF;
+  v_margen_contrib     := v_utilidad_bruta - v_variables;
+  v_margen_contrib_pct := CASE WHEN v_ventas_neto > 0
+                               THEN (v_margen_contrib / v_ventas_neto) * 100 ELSE 0 END;
+  IF v_margen_contrib_pct > 0 THEN
+    v_punto_equilibrio := v_fijos / (v_margen_contrib_pct / 100.0);
   END IF;
 
   RETURN json_build_object(
-    'success',              true,
-    'desde',                p_desde,
-    'hasta',                p_hasta,
-    'dias',                 v_dias,
+    'success', true,
+    'periodo', json_build_object('desde', p_desde, 'hasta', p_hasta, 'dias', v_dias),
     'ventas', json_build_object(
-      'neto',               v_ventas_neto,
-      'num_ventas',         v_num_ventas,
-      'num_anuladas',       v_ventas_anuladas
+      'neto', round(v_ventas_neto, 2),
+      'num_ventas', v_num_ventas,
+      'num_anuladas', v_ventas_anuladas,
+      'ticket_promedio', CASE WHEN v_num_ventas > 0 THEN round(v_ventas_neto / v_num_ventas, 2) ELSE 0 END
     ),
     'cogs', json_build_object(
-      'snapshot',           v_cogs_snapshot,
-      'estimado',           v_cogs_estimado,
-      'movs_con_snapshot',  v_movs_con_snapshot,
-      'movs_sin_snapshot',  v_movs_sin_snapshot,
-      'es_completo',        (v_movs_sin_snapshot = 0)
+      'snapshot', round(v_cogs_snapshot, 2),
+      'movimientos_con_snapshot', v_movs_con_snapshot,
+      'movimientos_sin_snapshot', v_movs_sin_snapshot,
+      'estimado_costo_actual', round(v_cogs_estimado, 2),
+      'es_completo', (v_movs_sin_snapshot = 0)
     ),
-    'nomina', json_build_object(
-      'pagada',             v_nomina_pagada,
-      'pendiente',          v_nomina_pendiente
-    ),
-    'gastos',               v_gastos,
     'egresos', json_build_object(
-      'otros_egresos_caja', v_otros_egresos,
-      'reversiones_anulacion_venta', v_reversiones_anulacion,
-      'retiros_socios',     v_retiros_socios
+      'nomina_pagada', round(v_nomina_pagada, 2),
+      'nomina_pendiente', round(v_nomina_pendiente, 2),
+      'gastos_operativos', round(v_gastos, 2),
+      'otros_egresos_caja', round(v_otros_egresos, 2),
+      'reversiones_anulacion_venta', round(v_reversiones_anulacion, 2),
+      'costos_fijos', round(v_fijos, 2),
+      'costos_variables', round(v_variables, 2),
+      'total', round(v_total_gastos_op, 2)
     ),
-    'compras_periodo',      v_compras_periodo,
-    'costos_configurados', json_build_object(
-      'fijos',              v_fijos,
-      'variables',          v_variables,
-      'detalle',            v_detalle_costos
+    'fuera_del_resultado', json_build_object(
+      'retiros_socios', round(v_retiros_socios, 2),
+      'compras_recibidas', round(v_compras_periodo, 2),
+      'reversiones_anulacion_venta', round(v_reversiones_anulacion, 2)
     ),
     'resultados', json_build_object(
-      'utilidad_bruta',     v_utilidad_bruta,
-      'total_gastos_op',    v_total_gastos_op,
-      'resultado_neto',     v_resultado,
-      'margen_contrib',     v_margen_contrib,
-      'margen_contrib_pct', v_margen_contrib_pct,
-      'punto_equilibrio',   v_punto_equilibrio
+      'utilidad_bruta', round(v_utilidad_bruta, 2),
+      'margen_bruto_pct', CASE WHEN v_ventas_neto > 0 THEN round((v_utilidad_bruta / v_ventas_neto) * 100, 1) ELSE 0 END,
+      'margen_contribucion', round(v_margen_contrib, 2),
+      'margen_contribucion_pct', round(v_margen_contrib_pct, 1),
+      'resultado_operativo', round(v_resultado, 2),
+      'punto_equilibrio', round(v_punto_equilibrio, 2),
+      'supera_equilibrio', (v_margen_contrib_pct > 0 AND v_ventas_neto >= v_punto_equilibrio),
+      'punto_equilibrio_calculable', (v_margen_contrib_pct > 0)
     ),
-    'advertencias',         v_advertencias
+    'detalle_costos', v_detalle_costos,
+    'advertencias', to_json(v_advertencias)
   );
 END;
 $function$;
 
+REVOKE EXECUTE ON FUNCTION public.fn_estado_resultados(timestamptz, timestamptz) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.fn_estado_resultados(timestamptz, timestamptz) FROM anon;
+GRANT  EXECUTE ON FUNCTION public.fn_estado_resultados(timestamptz, timestamptz) TO authenticated, service_role;
+
+COMMIT;
